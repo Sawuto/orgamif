@@ -34,17 +34,17 @@ async function session(id) { const tk = crypto.randomBytes(24).toString('hex'); 
 const pub = m => ({ id: m.id, name: m.name, color: m.color, hasPin: !!m.pin, admin: !!m.admin });
 
 // Ajout (avec répétition) + contrôle de chevauchement pour une même personne
-function addRep(ms, d, s, e, t, k, r, w, by, mode, ok) {
+function addRep(ms, d, s, e, t, k, r, w, by, mode, ok, j) {
   const ds = { wk: [0, 1, 2, 3, 4], we: [5, 6], all: [0, 1, 2, 3, 4, 5, 6] }[r] || [d];
   if (tm(e) <= tm(s)) return 'L’heure de fin doit être après l’heure de début.';
   const conf = [];
-  ms.forEach(m => ds.forEach(x => db.events.forEach(o => { if (o.m === m && o.d === x && (!o.w || !w || o.w === w) && tm(s) < tm(o.e) && tm(o.s) < tm(e) && !conf.includes(o)) conf.push(o); })));
+  if (!j) ms.forEach(m => ds.forEach(x => db.events.forEach(o => { if (o.m === m && !o.j && o.d === x && (!o.w || !w || o.w === w) && !(o.ex && w && o.ex.includes(w)) && tm(s) < tm(o.e) && tm(o.s) < tm(e) && !conf.includes(o)) conf.push(o); })));
   if (conf.length && !mode) return { conflicts: conf.slice(0, 20).map(o => ({ id: o.id, who: mem(o.m).name, t: o.t, d: DAYS[o.d], s: o.s, e: o.e, rm: ok(o) })), total: conf.length };
   if (conf.length && mode === 'new') {
     if (conf.some(o => !ok(o))) return 'Vous ne pouvez pas remplacer un événement qui appartient à quelqu’un d’autre : choisissez « Garder les deux ».';
     db.events = db.events.filter(o => !conf.includes(o));
   }
-  ms.forEach(m => { const g = ds.length > 1 ? uid() : undefined; ds.forEach(x => db.events.push({ id: uid(), m, d: x, s, e, t, k, ...(w && { w }), ...(by && { o: by }), ...(g && { g }) })); });
+  ms.forEach(m => { const g = ds.length > 1 ? uid() : undefined; ds.forEach(x => db.events.push({ id: uid(), m, d: x, s, e, t, k, ...(j && { j: true }), ...(w && { w }), ...(by && { o: by }), ...(g && { g }) })); });
   return '';
 }
 const confRes = (s, r) => typeof r === 'string' ? bad(s, r, 409) : s.status(409).json({ error: 'Deux événements se chevauchent.', conflicts: r.conflicts, total: r.total });
@@ -54,9 +54,10 @@ const evBody = b => {
   const ms = [...new Set(Array.isArray(b.ms) && b.ms.length ? b.ms : [b.m])].filter(Boolean);
   if (!ms.length) return { error: 'Choisissez au moins une personne.' };
   if (!ms.every(x => mem(x))) return { error: 'Personne inconnue.' };
-  if (!(d >= 0 && d <= 6) || !okT(b.s) || !okT(b.e) || !['one', 'wk', 'we', 'all'].includes(r)) return { error: 'Données invalides.' };
+  const j = !!b.j;
+  if (!(d >= 0 && d <= 6) || (!j && (!okT(b.s) || !okT(b.e))) || !['one', 'wk', 'we', 'all'].includes(r)) return { error: 'Données invalides.' };
   const w = b.rec ? undefined : mondayOf(b.w); if (!b.rec && !w) return { error: 'Semaine invalide.' };
-  return { m: ms[0], ms, d, s: b.s, e: b.e, t, k: ['Activité', 'Réunion', 'Cours'].includes(b.k) ? b.k : 'Activité', r, w };
+  return { m: ms[0], ms, d, s: j ? '00:00' : b.s, e: j ? '23:59' : b.e, j, t, k: ['Activité', 'Réunion', 'Cours'].includes(b.k) ? b.k : 'Activité', r, w };
 };
 
 const app = express();
@@ -120,7 +121,7 @@ app.post('/api/pin/change', A, async (q, s) => {
 });
 app.post('/api/logout', A, async (q, s) => { delete db.sessions[sha(q.headers.authorization.replace('Bearer ', ''))]; await save(); s.json({}); });
 app.get('/api/me', A, (q, s) => s.json({ id: q.me.id }));
-app.get('/api/state', A, (q, s) => { const { events, tasks, shop, links, tpl } = db; s.json({ members: db.members.map(pub), events, tasks, shop, links, tpl, ics: Object.fromEntries(Object.keys(db.icsUrls || {}).map(k => [k, true])) }); });
+app.get('/api/state', A, (q, s) => { const { events, tasks, shop, links, tpl } = db; s.json({ members: db.members.map(pub), events, tasks, shop, links, tpl, wake: db.wake || {}, days: db.days || {}, ics: Object.fromEntries(Object.keys(db.icsUrls || {}).map(k => [k, true])) }); });
 
 // membres
 app.post('/api/members', async (q, s, n) => (db.members.length ? A(q, s, n) : n()), async (q, s) => {
@@ -137,6 +138,7 @@ app.delete('/api/members/:id', A, async (q, s) => {
   if (!q.me.admin && q.me.id !== id) return bad(s, 'Seul l’administrateur peut supprimer un autre membre.', 403);
   db.members = db.members.filter(m => m.id !== id); if (db.icsUrls) delete db.icsUrls[id];
   db.events = db.events.filter(e => e.m !== id); db.tasks = db.tasks.filter(t => t.m !== id);
+  if (db.wake) delete db.wake[id]; Object.values(db.days || {}).forEach(d => { delete d[id]; });
   Object.keys(db.sessions).forEach(k => { if (db.sessions[k] === id) delete db.sessions[k]; });
   await save(); s.json({});
 });
@@ -150,13 +152,16 @@ app.post('/api/members/:id/reset-pin', A, async (q, s) => {
 // événements
 app.post('/api/events', A, async (q, s) => {
   const b = evBody(q.body); if (b.error) return bad(s, b.error);
-  const err = addRep(b.ms, b.d, b.s, b.e, b.t, b.k, b.r, b.w, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o)); if (err) return confRes(s, err);
+  const err = addRep(b.ms, b.d, b.s, b.e, b.t, b.k, b.r, b.w, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o), b.j); if (err) return confRes(s, err);
   await save(); s.json({});
 });
 app.delete('/api/events/:id', A, async (q, s) => {
   const e = db.events.find(x => x.id === q.params.id); if (!e) return s.json({});
   if (!can(q, e.m, e.o)) return forbid(s);
-  db.events = db.events.filter(x => x !== e); await save(); s.json({});
+  const wk = mondayOf(q.query.w); // « seulement cette semaine » : un événement hebdomadaire reçoit une exception
+  if (q.query.only && !e.w && wk) e.ex = [...new Set([...(e.ex || []), wk])].slice(-300);
+  else db.events = db.events.filter(x => x !== e);
+  await save(); s.json({});
 });
 app.delete('/api/series/:g', A, async (q, s) => {
   if (db.events.some(e => e.g === q.params.g && !can(q, e.m, e.o))) return forbid(s);
@@ -215,7 +220,7 @@ function doImport(m, list) {
     const w = mondayOf(x.w);
     if (!w || !(x.d >= 0 && x.d <= 6) || !okT(x.s) || !okT(x.e)) return;
     const o = { id: uid(), m, d: x.d, s: x.s, e: x.e, t: String(x.t || 'Sans titre').slice(0, 120), k: 'Cours', src: 'ics', w };
-    if (mine.some(b => b.d === o.d && (!b.w || b.w === w) && tm(o.s) < tm(b.e) && tm(b.s) < tm(o.e))) cf++;
+    if (mine.some(b => !b.j && !(b.ex && b.ex.includes(w)) && b.d === o.d && (!b.w || b.w === w) && tm(o.s) < tm(b.e) && tm(b.s) < tm(o.e))) cf++;
     db.events.push(o); n++;
   });
   return { n, cf, cut };
@@ -241,11 +246,40 @@ app.post('/api/events/import-url', A, async (q, s) => {
   } catch (e) { bad(s, e.message); }
 });
 
+// réveil : horaires habituels (par personne) et statut du jour
+app.post('/api/wake', A, async (q, s) => {
+  const m = q.body.m || q.me.id;
+  if (!mem(m)) return bad(s, 'Personne inconnue.');
+  if (!can(q, m)) return bad(s, 'Vous ne pouvez régler que votre propre réveil.', 403);
+  const times = Array.isArray(q.body.times) ? q.body.times.slice(0, 7).map(x => String(x || '')) : [];
+  while (times.length < 7) times.push('');
+  if (!times.every(x => x === '' || okT(x))) return bad(s, 'Heure invalide.');
+  const tol = Math.round(Number(q.body.tol));
+  if (!(tol >= 0 && tol <= 240)) return bad(s, 'Marge invalide (0 à 240 minutes).');
+  (db.wake = db.wake || {})[m] = { times, tol };
+  await save(); s.json({});
+});
+app.post('/api/day', A, async (q, s) => {
+  const { m, date, k } = q.body, v = q.body.v == null || q.body.v === '' ? null : String(q.body.v);
+  if (!mem(m)) return bad(s, 'Personne inconnue.');
+  if (!/^\d{4}-\d\d-\d\d$/.test(String(date)) || Math.abs(Date.parse(date + 'T00:00:00Z') - Date.now()) > 4 * 864e5) return bad(s, 'Date invalide.');
+  const okV = { up: x => okT(x), late: x => okT(x), away: x => ['night', 'gone'].includes(x), pres: x => ['home', 'route', 'out'].includes(x) }[k];
+  if (!okV || (v !== null && !okV(v))) return bad(s, 'Données invalides.');
+  if (k !== 'up' && !can(q, m)) return bad(s, 'Seule la personne concernée (ou l’administrateur) peut changer cela.', 403);
+  db.days = db.days || {};
+  const day = db.days[date] = db.days[date] || {}, r = day[m] = day[m] || {};
+  if (v === null) { delete r[k]; if (k === 'up') delete r.by; } else { r[k] = v; if (k === 'up') r.by = q.me.id; }
+  if (!Object.keys(r).length) delete day[m];
+  if (!Object.keys(day).length) delete db.days[date];
+  Object.keys(db.days).sort().slice(0, -14).forEach(x => { delete db.days[x]; });
+  await save(); s.json({});
+});
+
 // raccourcis
 app.post('/api/tpl', A, async (q, s) => {
   const b = evBody({ ...q.body, m: q.me.id, rec: true }); if (b.error) return bad(s, b.error);
   if (tm(b.e) <= tm(b.s)) return bad(s, 'L’heure de fin doit être après l’heure de début.');
-  db.tpl.push({ id: uid(), t: b.t, s: b.s, e: b.e, r: b.r, k: b.k, o: q.me.id }); await save(); s.json({});
+  db.tpl.push({ id: uid(), t: b.t, s: b.s, e: b.e, r: b.r, k: b.k, ...(b.j && { j: true }), o: q.me.id }); await save(); s.json({});
 });
 app.delete('/api/tpl/:id', A, async (q, s) => {
   const t = db.tpl.find(x => x.id === q.params.id); if (!t) return s.json({});
@@ -255,7 +289,7 @@ app.delete('/api/tpl/:id', A, async (q, s) => {
 app.post('/api/tpl/:id/apply', A, async (q, s) => {
   const t = db.tpl.find(x => x.id === q.params.id); if (!t) return bad(s, 'Raccourci inconnu.', 404);
   if (!mem(q.body.m)) return bad(s, 'Personne inconnue.');
-  const err = addRep([q.body.m], Number(q.body.d) || 0, t.s, t.e, t.t, t.k, t.r, mondayOf(q.body.w) || undefined, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o)); if (err) return confRes(s, err);
+  const err = addRep([q.body.m], Number(q.body.d) || 0, t.s, t.e, t.t, t.k, t.r, mondayOf(q.body.w) || undefined, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o), !!t.j); if (err) return confRes(s, err);
   await save(); s.json({});
 });
 

@@ -104,6 +104,84 @@
           </button>
         </nav>
         <main>
+          <template v-if="tab==='today'">
+            <p class="err" v-if="err" role="alert">{{ err }}</p>
+            <h2 class="h2">Aujourd’hui</h2>
+            <ul>
+              <li class="row" v-for="m in st.members" :key="m.id">
+                <span class="dot" :style="{background:m.color}"></span>
+                <span class="t">
+                  <b>{{ m.name }}</b> <small class="mu" v-if="m.id===me.id">(moi)</small><br />
+                  <span class="st" :class="wstat(m.id).c">{{ wstat(m.id).l }}</span>
+                  <span class="st neu" v-if="dayRec(m.id).pres">{{ PRES[dayRec(m.id).pres] }}</span>
+                </span>
+                <button class="chip" v-if="m.id!==me.id && !dayRec(m.id).up && !dayRec(m.id).away" @click="setDay(m.id,'up',nowHm())">Je l’ai vu debout</button>
+              </li>
+            </ul>
+            <div class="bar">
+              <div class="fld w100">
+                <span class="lb">Mon réveil</span>
+                <div class="chips">
+                  <button class="btn" type="button" v-if="!dayRec(me.id).up" @click="setDay(me.id,'up',nowHm())">Je suis debout</button>
+                  <button class="chip" type="button" v-else @click="setDay(me.id,'up',null)">Annuler « je suis debout »</button>
+                </div>
+              </div>
+              <div class="fld w100">
+                <span class="lb">Où êtes-vous ?</span>
+                <div class="chips">
+                  <button class="chip" type="button" v-for="(l,k) in PRES" :key="k" :aria-pressed="dayRec(me.id).pres===k" @click="setDay(me.id,'pres',dayRec(me.id).pres===k?null:k)">{{ l }}</button>
+                </div>
+              </div>
+            </div>
+            <div class="bar">
+              <div class="fld w100">
+                <span class="lb">Prévenir la famille d’un changement, pour :</span>
+                <div class="chips">
+                  <button class="chip" type="button" v-for="(l,i) in ['Aujourd’hui','Demain']" :key="i" :aria-pressed="ld===i" @click="ld=i">{{ l }}</button>
+                </div>
+              </div>
+              <div class="fld">
+                <span class="lb">Je me lève plus tard, vers</span>
+                <div class="chips">
+                  <input type="time" step="300" v-model="lt" />
+                  <button class="btn" type="button" :disabled="!lt" @click="announce('late',lt)">Annoncer</button>
+                </div>
+              </div>
+              <div class="fld w100">
+                <span class="lb">Ou</span>
+                <div class="chips">
+                  <button class="chip" type="button" @click="announce('away','night')">Absent(e) cette nuit</button>
+                  <button class="chip" type="button" @click="announce('away','gone')">Déjà parti(e)</button>
+                </div>
+              </div>
+              <p class="note w100" style="margin: 0" v-for="a in myAnn" :key="a.date+a.k">
+                {{ a.txt }}
+                <button class="x" type="button" style="text-decoration: underline; font-size: .85rem" @click="setDay(me.id,a.k,null,a.date)">retirer</button>
+              </p>
+            </div>
+            <details class="more">
+              <summary>Horaires de réveil habituels</summary>
+              <div class="bar">
+                <label class="w100" v-if="impList.length>1">Pour
+                  <select v-model="wf.m" @change="loadWake()"><option v-for="m in impList" :key="m.id" :value="m.id">{{ m.name }}</option></select>
+                </label>
+                <div class="fld" v-for="(d,i) in DAYS" :key="i">
+                  <span class="lb">{{ d }}</span>
+                  <input type="time" step="300" v-model="wf.times[i]" />
+                </div>
+                <div class="fld w100">
+                  <span class="lb">Marge avant « pas encore confirmé » : {{ wf.tol }} min</span>
+                  <div class="chips">
+                    <button class="chip" type="button" v-for="n in [15,30,45,60,90,120]" :key="n" :aria-pressed="Number(wf.tol)===n" @click="wf.tol=n">{{ n }} min</button>
+                  </div>
+                </div>
+                <div class="w100"><button class="btn" type="button" @click="saveWake()">Enregistrer</button></div>
+                <p class="note w100" style="margin: 0" v-if="wmsg">{{ wmsg }}</p>
+              </div>
+              <p class="note">Laissez vide un jour sans réveil prévu. Aucune alerte n’est envoyée : l’appli indique seulement l’état de chacun quand on la regarde.</p>
+            </details>
+          </template>
+
           <template v-if="tab==='plan'">
             <div class="wknav">
               <button class="btn" @click="go(-1)" aria-label="Semaine précédente">‹</button>
@@ -140,13 +218,14 @@
                 :key="t.id"
                 @click="applyTpl(t)"
               >
-                + {{ t.t }} <small class="mu">{{ t.s }}</small>
+                + {{ t.t }} <small class="mu">{{ t.j ? 'journée' : t.s }}</small>
               </button>
             </div>
             <p class="err" v-if="err" role="alert">{{ err }}</p>
             <div class="tg">
               <div class="ax">
                 <div class="dh"></div>
+                <div class="ad" :style="{height:grid.adH+'px'}"></div>
                 <div class="db" :style="{height:grid.H+'px'}">
                   <div
                     class="hr"
@@ -167,6 +246,12 @@
                 <div class="dh">
                   <span>{{ c.name }} {{ c.date }}</span>
                   <small class="mu" v-if="c.range">{{ c.range }}</small>
+                </div>
+                <div class="ad" :style="{height:grid.adH+'px'}">
+                  <div class="ev" v-for="a in c.ads" :key="a.e.id" :title="a.title" :style="a.style">
+                    <b>{{ a.e.t }}</b>
+                    <button class="x" v-if="can(a.e.m,a.e.o)" aria-label="Supprimer" @click="askDel(a.e)">×</button>
+                  </div>
                 </div>
                 <div class="db" :style="{height:grid.H+'px'}">
                   <div
@@ -190,7 +275,7 @@
                       class="x"
                       v-if="can(b.e.m,b.e.o)"
                       aria-label="Supprimer"
-                      @click="call('DELETE','/events/'+b.e.id)"
+                      @click="askDel(b.e)"
                     >
                       ×
                     </button>
@@ -229,6 +314,13 @@
                     <button type="button" class="chip" :aria-pressed="f.rec" @click="f.rec=!f.rec">↻ Chaque semaine</button>
                   </div>
                 </div>
+                <div class="fld w100">
+                  <span class="lb">Heure</span>
+                  <div class="chips">
+                    <button type="button" class="chip" :aria-pressed="f.j" @click="f.j=!f.j">☀ Toute la journée</button>
+                  </div>
+                </div>
+                <template v-if="!f.j">
                 <div class="fld">
                   <span class="lb">Début</span>
                   <input type="time" step="300" :value="f.s" @change="setStart($event.target.value)" />
@@ -243,6 +335,7 @@
                     <button type="button" class="chip" v-for="d in [30,45,60,90,120,180]" :key="d" :aria-pressed="dur===d" @click="setDur(d)">{{ durTxt(d) }}</button>
                   </div>
                 </div>
+                </template>
                 <div class="w100">
                   <button class="btn">Ajouter</button>
                   <button type="button" class="x" style="text-decoration: underline" @click="saveTpl()">Enregistrer comme raccourci</button>
@@ -251,7 +344,7 @@
               </form>
               <p class="note" v-if="st.tpl.length">
                 Raccourcis enregistrés :
-                <span v-for="t in st.tpl" :key="t.id">{{ t.t }} {{ t.s }}–{{ t.e }}
+                <span v-for="t in st.tpl" :key="t.id">{{ t.t }} {{ t.j ? '(toute la journée)' : t.s + '–' + t.e }}
                   <button class="x" aria-label="Supprimer le raccourci" v-if="can(t.o)" @click="call('DELETE','/tpl/'+t.id)">×</button>
                 </span>
               </p>
@@ -510,6 +603,17 @@
           <p class="err" v-if="err && tab!=='plan'" role="alert">{{ err }}</p>
         </main>
       </template>
+      <div class="modal" v-if="del" @click.self="del=null">
+        <div class="mbox neutral" role="alertdialog" aria-modal="true" aria-labelledby="dtitle">
+          <h2 id="dtitle">Supprimer « {{ del.t }} » ?</h2>
+          <p>Cet événement se répète chaque semaine.</p>
+          <div class="mact">
+            <button class="btn" type="button" @click="delOnce(del)">Seulement le {{ evDate(del) }}</button>
+            <button class="btn" type="button" @click="delAll(del)">Toutes les semaines</button>
+            <button class="btn alt" type="button" @click="del=null">Annuler</button>
+          </div>
+        </div>
+      </div>
       <div class="modal" v-if="conf" @click.self="conf=null">
         <div class="mbox" role="alertdialog" aria-modal="true" aria-labelledby="ctitle">
           <h2 id="ctitle">⚠ Deux événements en même temps</h2>

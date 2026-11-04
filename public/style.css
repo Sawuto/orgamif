@@ -79,3 +79,20 @@ small.mu{color:var(--mu)}
 .mact{display:flex;flex-direction:column;gap:8px}
 .btn.alt{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
 .btn:disabled{opacity:.45;cursor:default}
+/* réveil / présence */
+:root{--ok:#2e7d4f;--okb:#e3f2e8;--wn:#9a4f00;--wnb:#fdebd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ok:#7fd6a0;--okb:#1d3a2a;--wn:#f0b45f;--wnb:#3d2d14}}
+:root[data-theme="dark"]{--ok:#7fd6a0;--okb:#1d3a2a;--wn:#f0b45f;--wnb:#3d2d14}
+.h2{font:700 1.3rem/1.2 Georgia,"Times New Roman",serif;margin:0 0 10px}
+.st{display:inline-block;border-radius:99px;padding:2px 10px;margin:2px 4px 0 0;font-size:.85rem;border:1px solid var(--bd)}
+.st.neu{background:var(--bg);color:var(--mu)}
+.st.ok{background:var(--okb);color:var(--ok);border-color:var(--ok)}
+.st.warn{background:var(--wnb);color:var(--wn);border-color:var(--wn)}
+li.row .t{min-width:0}
+.bar{margin-top:10px}
+
+/* toute la journée */
+.ad{display:flex;flex-direction:column;padding:0 2px}
+.ad .ev{height:22px;margin:0 0 2px;padding:0 0 0 5px;align-items:center;font-size:.78rem;overflow:hidden}
+.ad .ev b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mbox.neutral{border-color:var(--bd)}

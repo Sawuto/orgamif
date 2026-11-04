@@ -4,6 +4,8 @@ const p2 = n => (n < 10 ? '0' : '') + n;
 const hm = t => p2(t.getHours()) + ':' + p2(t.getMinutes());
 const iso = d => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
 const todayIdx = (new Date().getDay() + 6) % 7;
+const PRES = { home: 'À la maison', route: 'En route', out: 'Absent(e)' };
+const AWAY = { night: 'Absent(e) cette nuit', gone: 'Déjà parti(e)' };
 const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
 
 function pd(x) { // date iCalendar -> Date
@@ -22,11 +24,11 @@ function parseIcs(txt) {
 
 Vue.createApp({
   data: () => ({
-    DAYS, todayIdx, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+    DAYS, todayIdx, PRES, AWAY, now: Date.now(), lt: '', ld: 0, del: null, wmsg: '', wf: { m: '', times: ['', '', '', '', '', '', ''], tol: 30 }, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     token: store.get('maison-token') || '', me: null, members: [], st: null, sel: null, pin: '', pin2: '', err: '', err2: '', msg: '',
-    off: 0, conf: null, im: '', icsUrl: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
+    off: 0, conf: null, im: '', icsUrl: '', tab: 'today', tabs: [['today', 'Aujourd’hui'], ['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
     filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, cp: { o: '', n: '', n2: '' }, lk: { t: '', k: 'Lien', u: '', i: '' },
-    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, ms: [], s: '08:00', e: '09:00' }
+    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, j: false, ms: [], s: '08:00', e: '09:00' }
   }),
   computed: {
     mon() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() - todayIdx + 7 * this.off); },
@@ -38,23 +40,41 @@ Vue.createApp({
     dur() { return tm(this.f.e) - tm(this.f.s); },
     durLabel() { return this.dur > 0 ? this.durTxt(this.dur) : 'la fin doit suivre le début'; },
     impList() { return this.st.members.filter(m => this.me.admin || m.id === this.me.id); },
+    tIso() { return iso(new Date(this.now)); },
+    tIdx() { return (new Date(this.now).getDay() + 6) % 7; },
+    tmrIso() { const n = new Date(this.now); return iso(new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1)); },
+    myAnn() {
+      const out = [];
+      [[this.tIso, 'Aujourd’hui'], [this.tmrIso, 'Demain']].forEach(([date, lab]) => {
+        const r = this.dayRec(this.me.id, date);
+        if (r.late) out.push({ k: 'late', date, txt: lab + ' : lever tardif vers ' + r.late });
+        if (r.away) out.push({ k: 'away', date, txt: lab + ' : ' + AWAY[r.away] });
+      });
+      return out;
+    },
     grid() {
-      const PX = 44, all = this.st.events.filter(e => (!e.w || e.w === this.wIso) && (!this.filter || e.m === this.filter) && (!this.kf || (this.kf === 'Cours') === ['Cours', 'TP', 'TD', 'Autonomie'].includes(e.k)));
+      const PX = 44, all = this.st.events.filter(e => (!e.w || e.w === this.wIso) && !(e.ex && e.ex.includes(this.wIso)) && (!this.filter || e.m === this.filter) && (!this.kf || (this.kf === 'Cours') === ['Cours', 'TP', 'TD', 'Autonomie'].includes(e.k)));
+      const timed = all.filter(e => !e.j);
       let lo = 8, hi = 18;
-      all.forEach(e => { lo = Math.min(lo, Math.floor(tm(e.s) / 60)); hi = Math.max(hi, Math.ceil(tm(e.e) / 60)); });
+      timed.forEach(e => { lo = Math.min(lo, Math.floor(tm(e.s) / 60)); hi = Math.max(hi, Math.ceil(tm(e.e) / 60)); });
       const hours = []; for (let h = lo; h < hi; h++) hours.push(h);
       const cols = DAYS.map((name, i) => {
         const dt = new Date(this.mon.getFullYear(), this.mon.getMonth(), this.mon.getDate() + i), date = p2(dt.getDate()) + '/' + p2(dt.getMonth() + 1);
-        const evs = all.filter(e => e.d === i).sort((a, b) => tm(a.s) - tm(b.s)), ends = [];
+        const evs = timed.filter(e => e.d === i).sort((a, b) => tm(a.s) - tm(b.s)), ends = [];
         const pl = evs.map(e => { let l = 0; while (ends[l] !== undefined && ends[l] > tm(e.s)) l++; ends[l] = Math.max(tm(e.e), tm(e.s) + 20); return { e, l }; });
         const n = Math.max(1, ends.length);
         const blocks = pl.map(({ e, l }) => {
           const c = this.mem(e.m).color, sub = `${e.s}–${e.e} · ${this.mem(e.m).name}` + (e.k && e.k !== 'Activité' ? ' · ' + e.k : '') + (e.w ? '' : ' · chaque semaine');
           return { e, sub, title: e.t + ' – ' + sub, style: { top: (tm(e.s) - lo * 60) * PX / 60 + 'px', height: Math.max((tm(e.e) - tm(e.s)) * PX / 60, 20) + 'px', left: l * 100 / n + '%', width: 100 / n + '%', background: c + '26', borderColor: c } };
         });
-        return { i, name, date, today: this.off === 0 && i === todayIdx, blocks, range: evs.length ? evs[0].s + '–' + evs.reduce((a, e) => e.e > a ? e.e : a, '00:00') : '' };
+        const ads = all.filter(e => e.j && e.d === i).map(e => {
+          const c = this.mem(e.m).color, sub = 'toute la journée · ' + this.mem(e.m).name + (e.w ? '' : ' · chaque semaine');
+          return { e, c, title: e.t + ' – ' + sub, style: { background: c + '26', borderColor: c } };
+        });
+        return { i, name, date, today: this.off === 0 && i === todayIdx, blocks, ads, range: evs.length ? evs[0].s + '–' + evs.reduce((a, e) => e.e > a ? e.e : a, '00:00') : '' };
       });
-      return { lo, hi, H: (hi - lo) * PX, hours, cols };
+      const adN = Math.max(0, ...cols.map(c => c.ads.length));
+      return { lo, hi, H: (hi - lo) * PX, adH: adN * 24, hours, cols };
     }
   },
   methods: {
@@ -74,6 +94,31 @@ Vue.createApp({
         this.msg = r.n + ' cours importé(s) sur toute la période du calendrier.' + (r.cut ? ' Le calendrier dépasse 3000 événements : la fin a été ignorée.' : '') + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : '');
         this.icsUrl = ''; await this.refresh();
       } catch (e) { this.msg = e.message; }
+    },
+    evDate(e) { const d = new Date(this.mon.getFullYear(), this.mon.getMonth(), this.mon.getDate() + e.d); return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }); },
+    askDel(e) { if (e.w) this.call('DELETE', '/events/' + e.id); else this.del = e; },
+    async delOnce(e) { await this.call('DELETE', '/events/' + e.id + '?only=1&w=' + this.wIso); this.del = null; },
+    async delAll(e) { await this.call('DELETE', '/events/' + e.id); this.del = null; },
+    nowHm() { return hm(new Date()); },
+    dayRec(id, date) { const d = this.st && this.st.days && this.st.days[date || this.tIso]; return (d && d[id]) || {}; },
+    wakeOf(id) { const w = this.st && this.st.wake && this.st.wake[id]; return { times: (w && w.times) || [], tol: w && w.tol != null ? w.tol : 30 }; },
+    wstat(id) {
+      const r = this.dayRec(id), w = this.wakeOf(id), n = new Date(this.now), mins = n.getHours() * 60 + n.getMinutes();
+      if (r.away) return { c: 'neu', l: AWAY[r.away] };
+      if (r.up) return { c: 'ok', l: 'Réveillé à ' + r.up + (r.by && r.by !== id ? ' · confirmé par ' + this.mem(r.by).name : '') };
+      const exp = r.late || w.times[this.tIdx];
+      if (!exp) return { c: 'neu', l: 'Pas d’heure de réveil réglée' };
+      const over = mins > tm(exp) + w.tol;
+      if (r.late) return over ? { c: 'warn', l: 'Pas encore confirmé (lever tardif annoncé vers ' + exp + ')' } : { c: 'neu', l: 'Grasse matinée prévue jusqu’à ' + exp };
+      return over ? { c: 'warn', l: 'Pas encore confirmé (prévu à ' + exp + ')' } : { c: 'neu', l: 'Prévu à ' + exp };
+    },
+    setDay(m, k, v, date) { return this.call('POST', '/day', { m, date: date || this.tIso, k, v }); },
+    announce(k, v) { return this.setDay(this.me.id, k, v, this.ld === 1 ? this.tmrIso : this.tIso); },
+    loadWake() { const w = this.wakeOf(this.wf.m); this.wf.times = [0, 1, 2, 3, 4, 5, 6].map(i => w.times[i] || ''); this.wf.tol = w.tol; this.wmsg = ''; },
+    async saveWake() {
+      this.wmsg = this.err = '';
+      try { await this.api('POST', '/wake', { m: this.wf.m, times: this.wf.times, tol: Number(this.wf.tol) }); await this.refresh(); this.wmsg = 'Horaires enregistrés.'; }
+      catch (e) { this.err = e.message; }
     },
     go(n) { this.off = n === 0 ? 0 : this.off + n; },
     mem(id) { return (this.st && this.st.members.find(m => m.id === id)) || { name: '?', color: '#888' }; },
@@ -99,12 +144,12 @@ Vue.createApp({
       } catch (e) { this.err = e.message; this.pin = this.pin2 = ''; }
     },
     async start() {
-      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = this.im = id; this.f.ms = [id]; }
+      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = this.im = this.wf.m = id; this.f.ms = [id]; this.loadWake(); }
       catch { this.logout(true); }
     },
     async logout(silent) {
       if (!silent && this.token) { try { await this.api('POST', '/logout'); } catch {} }
-      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = this.im = ''; this.f.ms = []; this.off = 0; this.loadMembers();
+      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = this.im = this.wf.m = ''; this.f.ms = []; this.off = 0; this.loadMembers();
     },
     async addMember() {
       this.err = '';
@@ -156,7 +201,8 @@ Vue.createApp({
     copy(t, ev) { try { navigator.clipboard.writeText(t); ev.target.textContent = 'Copié'; } catch {} }
   },
   async mounted() {
-    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') this.conf = null; });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { this.conf = null; this.del = null; } });
+    setInterval(() => { this.now = Date.now(); }, 30000);
     await this.loadMembers();
     if (this.token) await this.start();
     setInterval(() => { if (this.me && !document.hidden) this.refresh().catch(() => {}); }, 15000); // synchro famille
