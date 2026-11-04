@@ -104,6 +104,78 @@
           </button>
         </nav>
         <main>
+          <template v-if="tab==='me'">
+            <h2 class="h2">Bonjour {{ me.name }}</h2>
+            <div class="dash">
+              <section class="card">
+                <h3>Mon réveil et ma présence</h3>
+                <p>
+                  <span class="st" :class="wstat(me.id).c">{{ wstat(me.id).l }}</span>
+                  <span class="st neu" v-if="dayRec(me.id).pres">{{ PRES[dayRec(me.id).pres] }}</span>
+                </p>
+                <div class="chips">
+                  <button class="btn" type="button" v-if="!dayRec(me.id).up" @click="setDay(me.id,'up',nowHm())">Je suis debout</button>
+                  <button class="chip" type="button" v-for="(l,k) in PRES" :key="k" :aria-pressed="dayRec(me.id).pres===k" @click="setDay(me.id,'pres',dayRec(me.id).pres===k?null:k)">{{ l }}</button>
+                </div>
+              </section>
+              <section class="card">
+                <h3>Rappels à venir</h3>
+                <ul v-if="remSoon.length">
+                  <li class="row" v-for="x in remSoon" :key="x.r.id">
+                    <span class="t">{{ x.r.k==='Anniversaire'?'🎂':'🔔' }} <b>{{ x.r.t }}</b><small class="mu" v-if="x.age>0"> ({{ x.age }} ans)</small></span>
+                    <span class="st" :class="x.dd<=1?'warn':'neu'">{{ x.when }}</span>
+                  </li>
+                </ul>
+                <p class="empty" v-else>Rien dans les 30 prochains jours.</p>
+              </section>
+              <section class="card">
+                <h3>Mon planning d’aujourd’hui</h3>
+                <ul v-if="myDay.length">
+                  <li class="row" v-for="e in myDay" :key="e.id">
+                    <span class="dot" :style="{background:mem(e.m).color}"></span>
+                    <span class="t"><b>{{ e.t }}</b> <small class="mu">{{ e.j ? 'toute la journée' : e.s+'–'+e.e }}</small></span>
+                    <button class="x" aria-label="Modifier" @click="openEdit(e)">✎</button>
+                  </li>
+                </ul>
+                <p class="empty" v-else>Rien de prévu aujourd’hui.</p>
+              </section>
+              <section class="card">
+                <h3>À venir (7 jours)</h3>
+                <div v-for="g in myNext" :key="g.k">
+                  <b style="text-transform: capitalize">{{ g.label }}</b>
+                  <ul>
+                    <li class="row" v-for="e in g.evs" :key="e.id">
+                      <span class="t">{{ e.t }} <small class="mu">{{ e.j ? 'toute la journée' : e.s+'–'+e.e }}</small></span>
+                      <button class="x" aria-label="Modifier" @click="openEdit(e)">✎</button>
+                    </li>
+                  </ul>
+                </div>
+                <p class="empty" v-if="!myNext.length">Aucun événement cette semaine.</p>
+              </section>
+              <section class="card">
+                <h3>Mes tâches</h3>
+                <ul v-if="myTasks.length">
+                  <li class="row" v-for="t in myTasks" :key="t.id">
+                    <input type="checkbox" :checked="t.x" aria-label="Fait" @change="call('PATCH','/tasks/'+t.id,{x:$event.target.checked})" /><span class="t">{{ t.t }}</span>
+                  </li>
+                </ul>
+                <p class="empty" v-else>Aucune tâche en cours.</p>
+              </section>
+              <section class="card">
+                <h3>Mes comptes</h3>
+                <p v-if="!bal[me.id]">Tout est équilibré.</p>
+                <p v-else-if="bal[me.id]>0">On vous doit <b>{{ fmt(bal[me.id]) }}</b> au total.</p>
+                <p v-else>Vous devez <b>{{ fmt(-bal[me.id]) }}</b> au total.</p>
+                <ul>
+                  <li class="row" v-for="t in transfers.filter(t=>t.from===me.id||t.to===me.id)" :key="t.from+t.to">
+                    <span class="t">{{ t.from===me.id ? 'Vous devez '+fmt(t.amt)+' à '+mem(t.to).name : mem(t.from).name+' vous doit '+fmt(t.amt) }}</span>
+                    <button class="chip" @click="paid(t)">Remboursé</button>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </template>
+
           <template v-if="tab==='today'">
             <p class="err" v-if="err" role="alert">{{ err }}</p>
             <h2 class="h2">Aujourd’hui</h2>
@@ -183,7 +255,17 @@
           </template>
 
           <template v-if="tab==='plan'">
-            <div class="wknav">
+            <div class="chips" style="margin-bottom: 10px">
+              <button class="chip" :aria-pressed="view==='week'" @click="view='week'">Semaine</button>
+              <button class="chip" :aria-pressed="view==='month'" @click="view='month'">Mois</button>
+            </div>
+            <div class="wknav" v-if="view==='month'">
+              <button class="btn" @click="mgo(-1)" aria-label="Mois précédent">‹</button>
+              <button class="chip" @click="mgo(0)" :disabled="moff===0">Ce mois-ci</button>
+              <button class="btn" @click="mgo(1)" aria-label="Mois suivant">›</button>
+              <strong style="text-transform: capitalize">{{ mgrid.label }}</strong>
+            </div>
+            <div class="wknav" v-if="view==='week'">
               <button class="btn" @click="go(-1)" aria-label="Semaine précédente">‹</button>
               <button class="chip" @click="go(0)" :disabled="off===0">Cette semaine</button>
               <button class="btn" @click="go(1)" aria-label="Semaine suivante">›</button>
@@ -210,7 +292,7 @@
                 </button>
               </div>
             </div>
-            <div class="chips" v-if="st.tpl.length">
+            <div class="chips" v-if="st.tpl.length && view==='week'">
               <span class="mu" style="align-self: center">Ajout rapide :</span
               ><button
                 class="chip"
@@ -222,7 +304,18 @@
               </button>
             </div>
             <p class="err" v-if="err" role="alert">{{ err }}</p>
-            <div class="tg">
+            <div v-if="view==='month'">
+              <p class="note" style="margin: 0 0 8px">Cliquez sur un jour pour l’ouvrir en vue semaine. 🎂 🔔 = rappels.</p>
+              <div class="mg mh"><div v-for="d in DAYS" :key="d">{{ d.slice(0,3) }}</div></div>
+              <div class="mg" v-for="(row,ri) in mgrid.rows" :key="ri">
+                <div class="mc" :class="{out:c.out,today:c.today}" role="button" tabindex="0" v-for="c in row" :key="c.k" @click="openDay(c)" @keydown.enter="openDay(c)" :aria-label="'Ouvrir le '+c.k">
+                  <span class="mn">{{ c.n }}</span>
+                  <span class="pill" v-for="p in c.items" :key="p.id" :title="p.title||p.t" :style="{'--c':p.c,background:p.c+'33',borderColor:p.c}">{{ p.t }}</span>
+                  <small class="mu" v-if="c.more">+{{ c.more }}</small>
+                </div>
+              </div>
+            </div>
+            <div class="tg" v-if="view==='week'">
               <div class="ax">
                 <div class="dh"></div>
                 <div class="ad" :style="{height:grid.adH+'px'}"></div>
@@ -248,9 +341,9 @@
                   <small class="mu" v-if="c.range">{{ c.range }}</small>
                 </div>
                 <div class="ad" :style="{height:grid.adH+'px'}">
-                  <div class="ev" v-for="a in c.ads" :key="a.e.id" :title="a.title" :style="a.style">
+                  <div class="ev" v-for="a in c.ads" :key="a.e.id" :title="a.title" :style="a.style" role="button" tabindex="0" @click="openEdit(a.e)" @keydown.enter="openEdit(a.e)">
                     <b>{{ a.e.t }}</b>
-                    <button class="x" v-if="can(a.e.m,a.e.o)" aria-label="Supprimer" @click="askDel(a.e)">×</button>
+                    <button class="x" v-if="can(a.e.m,a.e.o)" aria-label="Supprimer" @click.stop="askDel(a.e)">×</button>
                   </div>
                 </div>
                 <div class="db" :style="{height:grid.H+'px'}">
@@ -260,6 +353,10 @@
                     :key="b.e.id"
                     :title="b.title"
                     :style="b.style"
+                    role="button"
+                    tabindex="0"
+                    @click="openEdit(b.e)"
+                    @keydown.enter="openEdit(b.e)"
                   >
                     <b>{{ b.e.t }}</b><small>{{ b.sub }}</small>
                     <button
@@ -267,7 +364,7 @@
                       class="x x2"
                       title="Supprimer toute la série"
                       aria-label="Supprimer toute la série"
-                      @click="call('DELETE','/series/'+b.e.g)"
+                      @click.stop="call('DELETE','/series/'+b.e.g)"
                     >
                       ⟳
                     </button>
@@ -275,7 +372,7 @@
                       class="x"
                       v-if="can(b.e.m,b.e.o)"
                       aria-label="Supprimer"
-                      @click="askDel(b.e)"
+                      @click.stop="askDel(b.e)"
                     >
                       ×
                     </button>
@@ -283,13 +380,14 @@
                 </div>
               </div>
             </div>
-            <details class="more" open>
+            <details class="more" open v-if="view==='week'">
               <summary>Ajouter un événement</summary>
               <form class="bar" @submit.prevent="addEvent()">
                 <label class="w100">Titre<input v-model="f.t" placeholder="Ex. : Piano, réunion parents" /></label>
                 <div class="fld w100">
                   <span class="lb">Qui participe ? (une ou plusieurs personnes)</span>
                   <div class="chips">
+                    <button type="button" class="chip" :aria-pressed="f.ms.length===st.members.length" @click="f.ms=st.members.map(m=>m.id)">👥 Tout le monde</button>
                     <button type="button" class="chip" v-for="m in st.members" :key="m.id" :aria-pressed="f.ms.includes(m.id)" @click="togMs(m.id)">
                       <span class="dot" :style="{background:m.color}"></span>{{ m.name }}
                     </button>
@@ -459,6 +557,99 @@
             <p class="empty" v-else>La liste est vide.</p>
           </template>
 
+          <template v-if="tab==='money'">
+            <h2 class="h2">Comptes</h2>
+            <ul>
+              <li class="row" v-for="m in st.members" :key="m.id">
+                <span class="dot" :style="{background:m.color}"></span><span class="t">{{ m.name }}</span>
+                <span class="st" :class="bal[m.id]>0?'ok':bal[m.id]<0?'warn':'neu'">{{ balTxt(m.id) }}</span>
+              </li>
+            </ul>
+            <h3>Pour tout équilibrer</h3>
+            <ul v-if="transfers.length">
+              <li class="row" v-for="t in transfers" :key="t.from+t.to">
+                <span class="t"><b>{{ mem(t.from).name }}</b> doit <b>{{ fmt(t.amt) }}</b> à <b>{{ mem(t.to).name }}</b></span>
+                <button class="chip" v-if="me.admin||t.from===me.id||t.to===me.id" @click="paid(t)">Marquer comme remboursé</button>
+              </li>
+            </ul>
+            <p class="empty" v-else>Tout le monde est à l’équilibre.</p>
+            <h3>Ajouter une dépense</h3>
+            <form class="bar" @submit.prevent="addExp()">
+              <label class="grow">Libellé<input v-model="xf.t" placeholder="Ex. : Courses, restaurant" /></label>
+              <label>Montant (€)<input v-model="xf.amt" inputmode="decimal" placeholder="12,50" style="width: 110px" /></label>
+              <label>Payé par<select v-model="xf.p"><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label>
+              <div class="fld w100">
+                <span class="lb">Partagée à parts égales entre</span>
+                <div class="chips">
+                  <button type="button" class="chip" :aria-pressed="xf.sh.length===st.members.length" @click="xf.sh=st.members.map(m=>m.id)">👥 Tout le monde</button>
+                  <button type="button" class="chip" v-for="m in st.members" :key="m.id" :aria-pressed="xf.sh.includes(m.id)" @click="xf.sh.includes(m.id)?xf.sh.splice(xf.sh.indexOf(m.id),1):xf.sh.push(m.id)"><span class="dot" :style="{background:m.color}"></span>{{ m.name }}</button>
+                </div>
+              </div>
+              <button class="btn">Ajouter</button>
+            </form>
+            <details class="more">
+              <summary>Enregistrer un remboursement</summary>
+              <form class="bar" @submit.prevent="addPay()">
+                <label>De<select v-model="pf.from"><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label>
+                <label>À<select v-model="pf.to"><option value="">—</option><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label>
+                <label>Montant (€)<input v-model="pf.amt" inputmode="decimal" style="width: 110px" /></label>
+                <button class="btn">Enregistrer</button>
+              </form>
+            </details>
+            <h3>Dépenses</h3>
+            <ul v-if="st.exp.length">
+              <li class="row" v-for="x in st.exp.slice().reverse()" :key="x.id">
+                <span class="t"><b>{{ x.t }}</b> · {{ fmt(x.amt) }}<br /><small class="mu">payé par {{ mem(x.p).name }} · pour {{ x.sh.map(i=>mem(i).name).join(', ') }} · {{ x.d }}</small></span>
+                <button class="x" v-if="can(x.o)" aria-label="Supprimer la dépense" @click="rm('/exp/'+x.id,'Supprimer cette dépense ?')">×</button>
+              </li>
+            </ul>
+            <p class="empty" v-else>Aucune dépense pour l’instant.</p>
+            <h3 v-if="st.pay.length">Remboursements</h3>
+            <ul v-if="st.pay.length">
+              <li class="row" v-for="x in st.pay.slice().reverse()" :key="x.id">
+                <span class="t">{{ mem(x.from).name }} → {{ mem(x.to).name }} · {{ fmt(x.amt) }} <small class="mu">{{ x.d }}</small></span>
+                <button class="x" v-if="can(x.o)" aria-label="Annuler le remboursement" @click="rm('/pay/'+x.id,'Annuler ce remboursement ?')">×</button>
+              </li>
+            </ul>
+            <p class="note">Les dépenses sont partagées à parts égales. Un solde positif signifie « on lui doit de l’argent ».</p>
+          </template>
+
+          <template v-if="tab==='rem'">
+            <h2 class="h2">Rappels</h2>
+            <form class="bar" @submit.prevent="add('rem',{t:rf.t,date:rf.date,k:rf.k,y:rf.y},()=>{rf.t='';rf.date=''})">
+              <label class="grow">Titre<input v-model="rf.t" placeholder="Ex. : Anniversaire de Mamie" /></label>
+              <label>Date<input type="date" v-model="rf.date" /></label>
+              <div class="fld">
+                <span class="lb">Type</span>
+                <div class="chips">
+                  <button type="button" class="chip" v-for="k in ['Anniversaire','Autre']" :key="k" :aria-pressed="rf.k===k" @click="rf.k=k;rf.y=k==='Anniversaire'">{{ k }}</button>
+                  <button type="button" class="chip" :aria-pressed="rf.y" @click="rf.y=!rf.y">↻ Chaque année</button>
+                </div>
+              </div>
+              <button class="btn">Ajouter</button>
+            </form>
+            <ul v-if="remList.length">
+              <li class="row" v-for="x in remList" :key="x.r.id" :class="{done:x.past}">
+                <span class="t">{{ x.r.k==='Anniversaire'?'🎂':'🔔' }} <b>{{ x.r.t }}</b> <small class="mu">{{ x.day }}<template v-if="x.age>0"> · {{ x.age }} ans</template></small></span>
+                <span class="st" :class="!x.past && x.dd<=1?'warn':'neu'">{{ x.when }}</span>
+                <button class="x" v-if="can(x.r.o)" aria-label="Supprimer le rappel" @click="call('DELETE','/rem/'+x.r.id)">×</button>
+              </li>
+            </ul>
+            <p class="empty" v-else>Aucun rappel. Ajoutez un anniversaire ou une date importante.</p>
+            <p class="note">Les rappels s’affichent dans « Mon espace » (30 jours à l’avance) et dans le planning mensuel. L’appli n’envoie pas de notification sur le téléphone.</p>
+          </template>
+
+          <template v-if="tab==='logs'">
+            <h2 class="h2">Journal</h2>
+            <ul v-if="logsList.length">
+              <li class="row" v-for="l in logsList" :key="l.id">
+                <span class="t">{{ l.t }}<br /><small class="mu">{{ fmtAt(l.at) }} · {{ l.n }}</small></span>
+              </li>
+            </ul>
+            <p class="empty" v-else>Aucune action enregistrée pour l’instant.</p>
+            <p class="note">Les 150 dernières actions sont affichées : événements, tâches, rappels, dépenses et remboursements.</p>
+          </template>
+
           <template v-if="tab==='links'">
             <form
               class="bar"
@@ -600,9 +791,40 @@
               partagées par toute la famille.
             </p>
           </template>
-          <p class="err" v-if="err && tab!=='plan'" role="alert">{{ err }}</p>
+          <p class="err" v-if="err && tab!=='plan' && tab!=='today'" role="alert">{{ err }}</p>
         </main>
       </template>
+      <div class="modal" v-if="ed" @click.self="ed=null">
+        <div class="mbox neutral" role="dialog" aria-modal="true" aria-labelledby="etitle">
+          <h2 id="etitle">Modifier l’événement</h2>
+          <p class="note" style="margin: 0 0 8px" v-if="!ed.ok">Cet événement appartient à {{ mem(ed.m).name }} : vous pouvez le consulter mais pas le modifier.</p>
+          <p class="note" style="margin: 0 0 8px" v-else-if="ed.rec">Cet événement se répète chaque semaine : la modification vaut pour toutes les semaines.</p>
+          <form class="bar" @submit.prevent="saveEdit()">
+            <label class="w100">Titre<input v-model="ed.t" :disabled="!ed.ok" /></label>
+            <div class="fld w100">
+              <span class="lb">Type</span>
+              <div class="chips"><button type="button" class="chip" v-for="k in ['Activité','Réunion','Cours']" :key="k" :disabled="!ed.ok" :aria-pressed="ed.k===k" @click="ed.k=k">{{ k }}</button></div>
+            </div>
+            <div class="fld w100">
+              <span class="lb">Jour</span>
+              <div class="chips"><button type="button" class="chip" v-for="(d,i) in DAYS" :key="i" :disabled="!ed.ok" :aria-pressed="ed.d===i" @click="ed.d=i">{{ d.slice(0,3) }}</button></div>
+            </div>
+            <div class="fld w100">
+              <div class="chips"><button type="button" class="chip" :disabled="!ed.ok" :aria-pressed="ed.j" @click="ed.j=!ed.j">☀ Toute la journée</button></div>
+            </div>
+            <template v-if="!ed.j">
+              <div class="fld"><span class="lb">Début</span><input type="time" step="300" v-model="ed.s" :disabled="!ed.ok" /></div>
+              <div class="fld"><span class="lb">Fin</span><input type="time" step="300" v-model="ed.e" :disabled="!ed.ok" /></div>
+            </template>
+            <p class="err w100" role="alert" v-if="edErr" style="margin: 0">{{ edErr }}</p>
+            <div class="mact w100">
+              <button class="btn" v-if="ed.ok">Enregistrer</button>
+              <button class="btn alt" type="button" v-if="ed.ok" @click="delFromEdit()">Supprimer…</button>
+              <button class="btn alt" type="button" @click="ed=null">Fermer</button>
+            </div>
+          </form>
+        </div>
+      </div>
       <div class="modal" v-if="del" @click.self="del=null">
         <div class="mbox neutral" role="alertdialog" aria-modal="true" aria-labelledby="dtitle">
           <h2 id="dtitle">Supprimer « {{ del.t }} » ?</h2>
@@ -618,7 +840,7 @@
         <div class="mbox" role="alertdialog" aria-modal="true" aria-labelledby="ctitle">
           <h2 id="ctitle">⚠ Deux événements en même temps</h2>
           <p>
-            Le nouvel événement <b>{{ conf.nv.t }}</b> ({{ conf.nv.s }}–{{ conf.nv.e }}, {{ conf.nv.who }})
+            {{ conf.kind==='edit' ? 'L’événement modifié' : 'Le nouvel événement' }} <b>{{ conf.nv.t }}</b> ({{ conf.nv.s }}–{{ conf.nv.e }}, {{ conf.nv.who }})
             chevauche {{ conf.total > 1 ? conf.total + ' événements' : 'un événement' }} :
           </p>
           <ul class="clist">
@@ -633,6 +855,7 @@
           <p class="note" v-if="conf.list.some(c=>!c.rm)">« Garder seulement le nouveau » est indisponible : un des événements appartient à quelqu’un d’autre.</p>
         </div>
       </div>
+      <div class="toast" role="status" aria-live="polite" v-if="tmsg">✓ {{ tmsg }}</div>
     </div>
     <script src="vendor/vue.global.prod.js"></script>
     <script src="app.js"></script>

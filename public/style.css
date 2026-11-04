@@ -96,3 +96,24 @@ li.row .t{min-width:0}
 .ad .ev{height:22px;margin:0 0 2px;padding:0 0 0 5px;align-items:center;font-size:.78rem;overflow:hidden}
 .ad .ev b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mbox.neutral{border-color:var(--bd)}
+
+/* tableau de bord, mois, toast */
+.dash{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin-bottom:14px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:10px;padding:12px;min-width:0}
+.card h3,main>template+h3,h3{margin:14px 0 8px;font-size:1rem}
+.card h3{margin-top:0}
+.card p{margin:0 0 8px}
+.ev[role=button]{cursor:pointer}
+.mg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-bottom:4px}
+.mh div{font-size:.8rem;color:var(--mu);text-align:center;text-transform:capitalize}
+.mc{background:var(--sf);border:1px solid var(--bd);border-radius:8px;min-height:92px;padding:3px;display:flex;flex-direction:column;gap:2px;overflow:hidden;cursor:pointer}
+.mc.out{opacity:.5}
+.mc.today{border:2px solid var(--ac)}
+.mn{font-size:.8rem;font-weight:700}
+.pill{display:block;border-left:3px solid;border-radius:3px;padding:0 4px;font-size:.72rem;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:99px;font-weight:700;z-index:60;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:calc(100% - 32px)}
+@media (max-width:640px){
+  .mc{min-height:62px;flex-direction:row;flex-wrap:wrap;align-content:flex-start}
+  .mn{flex-basis:100%}
+  .pill{font-size:0;width:9px;height:9px;padding:0;border:0;border-radius:50%;background:var(--c)!important}
+}

@@ -31,6 +31,9 @@ const chk = (pin, p) => crypto.timingSafeEqual(Buffer.from(hashPin(pin, p.salt).
 const mem = id => db.members.find(m => m.id === id);
 const fails = {};
 async function session(id) { const tk = crypto.randomBytes(24).toString('hex'); db.sessions[sha(tk)] = id; await save(); return { token: tk, id }; }
+const nm = id => (mem(id) || { name: '?' }).name;
+const eur = c => (c / 100).toFixed(2).replace('.', ',') + ' €';
+const log = (q, t) => { (db.logs = db.logs || []).push({ id: uid(), at: new Date().toISOString(), by: q.me.id, n: q.me.name, t }); if (db.logs.length > 300) db.logs = db.logs.slice(-300); };
 const pub = m => ({ id: m.id, name: m.name, color: m.color, hasPin: !!m.pin, admin: !!m.admin });
 
 // Ajout (avec répétition) + contrôle de chevauchement pour une même personne
@@ -83,7 +86,7 @@ app.get('/api/health', async (q, s) => {
 app.use('/api', (q, s, n) => process.env.VERCEL && !U
   ? s.status(503).json({ error: 'Base de données non connectée : les variables KV_REST_API_URL et KV_REST_API_TOKEN sont introuvables sur ce déploiement. Ajoutez-les (Production), puis redéployez.' })
   : n());
-app.use('/api', async (q, s, n) => { db = U ? await load() : (db || await load()); await seed(); n(); });
+app.use('/api', async (q, s, n) => { db = U ? await load() : (db || await load()); await seed(); ['rem', 'exp', 'pay', 'logs'].forEach(k => { db[k] = db[k] || []; }); n(); });
 const A = (q, s, n) => {
   const m = mem(db.sessions[sha((q.headers.authorization || '').replace('Bearer ', ''))]);
   if (!m) return s.status(401).json({ error: 'Session expirée.', auth: true });
@@ -121,7 +124,7 @@ app.post('/api/pin/change', A, async (q, s) => {
 });
 app.post('/api/logout', A, async (q, s) => { delete db.sessions[sha(q.headers.authorization.replace('Bearer ', ''))]; await save(); s.json({}); });
 app.get('/api/me', A, (q, s) => s.json({ id: q.me.id }));
-app.get('/api/state', A, (q, s) => { const { events, tasks, shop, links, tpl } = db; s.json({ members: db.members.map(pub), events, tasks, shop, links, tpl, wake: db.wake || {}, days: db.days || {}, ics: Object.fromEntries(Object.keys(db.icsUrls || {}).map(k => [k, true])) }); });
+app.get('/api/state', A, (q, s) => { const { events, tasks, shop, links, tpl } = db; s.json({ members: db.members.map(pub), events, tasks, shop, links, tpl, wake: db.wake || {}, days: db.days || {}, rem: db.rem, exp: db.exp, pay: db.pay, logs: db.logs.slice(-150), ics: Object.fromEntries(Object.keys(db.icsUrls || {}).map(k => [k, true])) }); });
 
 // membres
 app.post('/api/members', async (q, s, n) => (db.members.length ? A(q, s, n) : n()), async (q, s) => {
@@ -138,6 +141,7 @@ app.delete('/api/members/:id', A, async (q, s) => {
   if (!q.me.admin && q.me.id !== id) return bad(s, 'Seul l’administrateur peut supprimer un autre membre.', 403);
   db.members = db.members.filter(m => m.id !== id); if (db.icsUrls) delete db.icsUrls[id];
   db.events = db.events.filter(e => e.m !== id); db.tasks = db.tasks.filter(t => t.m !== id);
+  db.exp = db.exp.filter(x => x.p !== id).map(x => ({ ...x, sh: x.sh.filter(i => i !== id) })).filter(x => x.sh.length); db.pay = db.pay.filter(x => x.from !== id && x.to !== id); db.rem = db.rem.filter(x => x.o !== id);
   if (db.wake) delete db.wake[id]; Object.values(db.days || {}).forEach(d => { delete d[id]; });
   Object.keys(db.sessions).forEach(k => { if (db.sessions[k] === id) delete db.sessions[k]; });
   await save(); s.json({});
@@ -153,18 +157,41 @@ app.post('/api/members/:id/reset-pin', A, async (q, s) => {
 app.post('/api/events', A, async (q, s) => {
   const b = evBody(q.body); if (b.error) return bad(s, b.error);
   const err = addRep(b.ms, b.d, b.s, b.e, b.t, b.k, b.r, b.w, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o), b.j); if (err) return confRes(s, err);
+  log(q, 'Événement ajouté : ' + b.t + ' (' + b.ms.map(nm).join(', ') + ', ' + (b.j ? 'toute la journée' : b.s + '–' + b.e) + ')');
+  await save(); s.json({});
+});
+// modification d'un événement existant (un seul créneau ; un événement « chaque semaine » est modifié pour toutes les semaines)
+app.patch('/api/events/:id', A, async (q, s) => {
+  const e = db.events.find(x => x.id === q.params.id); if (!e) return bad(s, 'Événement introuvable.', 404);
+  if (!can(q, e.m, e.o)) return bad(s, 'Vous ne pouvez pas modifier ce qui appartient à quelqu’un d’autre.', 403);
+  const b = evBody({ ...q.body, m: e.m, ms: [e.m], r: 'one', rec: !e.w, w: e.w }); if (b.error) return bad(s, b.error);
+  if (tm(b.e) <= tm(b.s)) return bad(s, 'L’heure de fin doit être après l’heure de début.');
+  const conf = [];
+  if (!b.j) db.events.forEach(o => { if (o !== e && o.m === e.m && !o.j && o.d === b.d && (!o.w || !e.w || o.w === e.w) && !(o.ex && e.w && o.ex.includes(e.w)) && tm(b.s) < tm(o.e) && tm(o.s) < tm(b.e)) conf.push(o); });
+  const mode = ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined;
+  if (conf.length && !mode) return s.status(409).json({ error: 'Deux événements se chevauchent.', conflicts: conf.slice(0, 20).map(o => ({ id: o.id, who: nm(o.m), t: o.t, d: DAYS[o.d], s: o.s, e: o.e, rm: can(q, o.m, o.o) })), total: conf.length });
+  if (conf.length && mode === 'new') {
+    if (conf.some(o => !can(q, o.m, o.o))) return bad(s, 'Vous ne pouvez pas remplacer un événement qui appartient à quelqu’un d’autre : choisissez « Garder les deux ».', 409);
+    db.events = db.events.filter(o => !conf.includes(o));
+  }
+  const av = e.t + ' ' + (e.j ? 'toute la journée' : e.s + '–' + e.e) + ' ' + DAYS[e.d];
+  Object.assign(e, { t: b.t, k: b.k, d: b.d, s: b.s, e: b.e }); if (b.j) e.j = true; else delete e.j;
+  log(q, 'Événement modifié : ' + av + ' → ' + e.t + ' ' + (e.j ? 'toute la journée' : e.s + '–' + e.e) + ' ' + DAYS[e.d] + ' (' + nm(e.m) + ')');
   await save(); s.json({});
 });
 app.delete('/api/events/:id', A, async (q, s) => {
   const e = db.events.find(x => x.id === q.params.id); if (!e) return s.json({});
   if (!can(q, e.m, e.o)) return forbid(s);
   const wk = mondayOf(q.query.w); // « seulement cette semaine » : un événement hebdomadaire reçoit une exception
-  if (q.query.only && !e.w && wk) e.ex = [...new Set([...(e.ex || []), wk])].slice(-300);
+  const one = q.query.only && !e.w && wk;
+  if (one) e.ex = [...new Set([...(e.ex || []), wk])].slice(-300);
   else db.events = db.events.filter(x => x !== e);
+  log(q, (one ? 'Créneau supprimé (semaine du ' + wk + ') : ' : 'Événement supprimé : ') + e.t + ' (' + nm(e.m) + ', ' + DAYS[e.d] + ')');
   await save(); s.json({});
 });
 app.delete('/api/series/:g', A, async (q, s) => {
   if (db.events.some(e => e.g === q.params.g && !can(q, e.m, e.o))) return forbid(s);
+  const f0 = db.events.find(e => e.g === q.params.g); if (f0) log(q, 'Série supprimée : ' + f0.t + ' (' + nm(f0.m) + ')');
   db.events = db.events.filter(e => e.g !== q.params.g); await save(); s.json({});
 });
 // ICS-BEGIN
@@ -232,7 +259,7 @@ const okImp = (q, s, m) => {
 };
 app.post('/api/events/import', A, async (q, s) => {
   const m = q.body.m; if (!okImp(q, s, m)) return;
-  const r = doImport(m, Array.isArray(q.body.events) ? q.body.events : []); await save(); s.json(r);
+  const r = doImport(m, Array.isArray(q.body.events) ? q.body.events : []); log(q, 'Agenda importé pour ' + nm(m) + ' (' + r.n + ' cours)'); await save(); s.json(r);
 });
 app.post('/api/events/import-url', A, async (q, s) => {
   const m = q.body.m; if (!okImp(q, s, m)) return;
@@ -242,7 +269,7 @@ app.post('/api/events/import-url', A, async (q, s) => {
     const list = parseIcsServer(await fetchIcs(url));
     if (!list.length) return bad(s, 'Aucun cours trouvé dans cet agenda.');
     (db.icsUrls = db.icsUrls || {})[m] = url;
-    const r = doImport(m, list); await save(); s.json(r);
+    const r = doImport(m, list); log(q, 'Agenda importé pour ' + nm(m) + ' (' + r.n + ' cours)'); await save(); s.json(r);
   } catch (e) { bad(s, e.message); }
 });
 
@@ -290,21 +317,22 @@ app.post('/api/tpl/:id/apply', A, async (q, s) => {
   const t = db.tpl.find(x => x.id === q.params.id); if (!t) return bad(s, 'Raccourci inconnu.', 404);
   if (!mem(q.body.m)) return bad(s, 'Personne inconnue.');
   const err = addRep([q.body.m], Number(q.body.d) || 0, t.s, t.e, t.t, t.k, t.r, mondayOf(q.body.w) || undefined, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o), !!t.j); if (err) return confRes(s, err);
+  log(q, 'Événement ajouté (raccourci) : ' + t.t + ' (' + nm(q.body.m) + ')');
   await save(); s.json({});
 });
 
 // tâches, courses, liens
-const list = (name, mk) => {
-  app.post('/api/' + name, A, async (q, s) => { const o = mk(q.body, q.me); if (!o) return bad(s, 'Données invalides.'); db[name].push({ id: uid(), ...o, o: q.me.id }); await save(); s.json({}); });
+const list = (name, mk, lab) => {
+  app.post('/api/' + name, A, async (q, s) => { const o = mk(q.body, q.me); if (!o) return bad(s, 'Données invalides.'); const n = { id: uid(), ...o, o: q.me.id }; db[name].push(n); lab && log(q, lab.a + ' : ' + lab.f(n)); await save(); s.json({}); });
   app.patch('/api/' + name + '/:id', A, async (q, s) => { db[name].forEach(x => { if (x.id === q.params.id) x.x = !!q.body.x; }); await save(); s.json({}); });
   app.delete('/api/' + name + '/:id', A, async (q, s) => {
     const x = db[name].find(y => y.id === q.params.id); if (!x) return s.json({});
     if (!can(q, x.m, x.o)) return forbid(s);
-    db[name] = db[name].filter(y => y !== x); await save(); s.json({});
+    db[name] = db[name].filter(y => y !== x); lab && log(q, lab.d + ' : ' + lab.f(x)); await save(); s.json({});
   });
 };
 const txt = (v, n = 120) => String(v || '').trim().slice(0, n);
-list('tasks', b => txt(b.t) && mem(b.m) ? { t: txt(b.t), m: b.m, x: false } : null);
+list('tasks', b => txt(b.t) && mem(b.m) ? { t: txt(b.t), m: b.m, x: false } : null, { a: 'Tâche ajoutée', d: 'Tâche supprimée', f: o => o.t + ' (' + nm(o.m) + ')' });
 list('shop', b => txt(b.t) ? { t: txt(b.t), x: false } : null);
 list('links', b => {
   let u = txt(b.u, 500); if (!txt(b.t) || !u) return null;
@@ -312,7 +340,48 @@ list('links', b => {
   try { new URL(u); } catch { return null; }
   return { t: txt(b.t), u, i: txt(b.i, 80), k: txt(b.k, 30) || 'Lien' };
 });
+list('rem', b => {
+  const d = String(b.date || '');
+  if (!txt(b.t) || !/^\d{4}-\d\d-\d\d$/.test(d) || isNaN(new Date(d + 'T00:00:00Z'))) return null;
+  return { t: txt(b.t, 80), date: d, y: !!b.y, k: b.k === 'Anniversaire' ? 'Anniversaire' : 'Autre' };
+}, { a: 'Rappel ajouté', d: 'Rappel supprimé', f: o => o.t + ' (' + o.date + (o.y ? ', chaque année' : '') + ')' });
 app.delete('/api/shop-checked', A, async (q, s) => { db.shop = db.shop.filter(x => !(x.x && can(q, x.o))); await save(); s.json({}); });
+
+// comptes : dépenses partagées à parts égales + remboursements
+const money = v => Math.round(Number(String(v).replace(',', '.')) * 100);
+app.post('/api/exp', A, async (q, s) => {
+  const t = txt(q.body.t, 80), amt = money(q.body.amt), p = q.body.p;
+  const sh = [...new Set(Array.isArray(q.body.sh) ? q.body.sh : [])].filter(i => mem(i));
+  if (!t) return bad(s, 'Donnez un libellé à la dépense.');
+  if (!(amt > 0 && amt <= 1e8)) return bad(s, 'Montant invalide.');
+  if (!mem(p)) return bad(s, 'Qui a payé ?');
+  if (!sh.length) return bad(s, 'Choisissez au moins une personne concernée.');
+  const d = /^\d{4}-\d\d-\d\d$/.test(String(q.body.d)) ? q.body.d : new Date().toISOString().slice(0, 10);
+  db.exp.push({ id: uid(), t, amt, p, sh, d, o: q.me.id });
+  log(q, 'Dépense ajoutée : ' + t + ' ' + eur(amt) + ', payée par ' + nm(p) + ', partagée entre ' + sh.map(nm).join(', '));
+  await save(); s.json({});
+});
+app.delete('/api/exp/:id', A, async (q, s) => {
+  const x = db.exp.find(y => y.id === q.params.id); if (!x) return s.json({});
+  if (!can(q, x.o)) return forbid(s);
+  db.exp = db.exp.filter(y => y !== x); log(q, 'Dépense supprimée : ' + x.t + ' ' + eur(x.amt) + ' (payée par ' + nm(x.p) + ')');
+  await save(); s.json({});
+});
+app.post('/api/pay', A, async (q, s) => {
+  const { from, to } = q.body, amt = money(q.body.amt);
+  if (!mem(from) || !mem(to) || from === to) return bad(s, 'Choisissez deux personnes différentes.');
+  if (!(amt > 0 && amt <= 1e8)) return bad(s, 'Montant invalide.');
+  if (!q.me.admin && q.me.id !== from && q.me.id !== to) return bad(s, 'Seules les personnes concernées (ou l’administrateur) peuvent enregistrer ce remboursement.', 403);
+  db.pay.push({ id: uid(), from, to, amt, d: new Date().toISOString().slice(0, 10), o: q.me.id });
+  log(q, 'Remboursement : ' + nm(from) + ' → ' + nm(to) + ' ' + eur(amt));
+  await save(); s.json({});
+});
+app.delete('/api/pay/:id', A, async (q, s) => {
+  const x = db.pay.find(y => y.id === q.params.id); if (!x) return s.json({});
+  if (!can(q, x.o)) return forbid(s);
+  db.pay = db.pay.filter(y => y !== x); log(q, 'Remboursement annulé : ' + nm(x.from) + ' → ' + nm(x.to) + ' ' + eur(x.amt));
+  await save(); s.json({});
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', (q, s) => bad(s, 'Introuvable.', 404));
