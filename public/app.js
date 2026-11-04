@@ -2,6 +2,7 @@ const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dima
 const tm = s => { const p = String(s).split(':'); return +p[0] * 60 + (+p[1] || 0); };
 const p2 = n => (n < 10 ? '0' : '') + n;
 const hm = t => p2(t.getHours()) + ':' + p2(t.getMinutes());
+const iso = d => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
 const todayIdx = (new Date().getDay() + 6) % 7;
 const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
 
@@ -23,30 +24,40 @@ Vue.createApp({
   data: () => ({
     DAYS, todayIdx, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     token: store.get('maison-token') || '', me: null, members: [], st: null, sel: null, pin: '', pin2: '', err: '', err2: '', msg: '',
-    tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
+    off: 0, im: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
     filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, cp: { o: '', n: '', n2: '' }, lk: { t: '', k: 'Lien', u: '', i: '' },
-    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', s: '08:00', e: '09:00' }
+    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, s: '08:00', e: '09:00' }
   }),
   computed: {
+    mon() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() - todayIdx + 7 * this.off); },
+    wIso() { return iso(this.mon); },
+    weekLabel() {
+      const a = this.mon, b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6), o = { day: 'numeric', month: 'long' };
+      return 'Semaine du ' + a.toLocaleDateString('fr-FR', o) + ' au ' + b.toLocaleDateString('fr-FR', { ...o, year: 'numeric' });
+    },
+    impList() { return this.st.members.filter(m => this.me.admin || m.id === this.me.id); },
     grid() {
-      const PX = 44, all = this.st.events.filter(e => (!this.filter || e.m === this.filter) && (!this.kf || (this.kf === 'Cours') === ['Cours', 'TP', 'TD', 'Autonomie'].includes(e.k)));
+      const PX = 44, all = this.st.events.filter(e => (!e.w || e.w === this.wIso) && (!this.filter || e.m === this.filter) && (!this.kf || (this.kf === 'Cours') === ['Cours', 'TP', 'TD', 'Autonomie'].includes(e.k)));
       let lo = 8, hi = 18;
       all.forEach(e => { lo = Math.min(lo, Math.floor(tm(e.s) / 60)); hi = Math.max(hi, Math.ceil(tm(e.e) / 60)); });
       const hours = []; for (let h = lo; h < hi; h++) hours.push(h);
       const cols = DAYS.map((name, i) => {
+        const dt = new Date(this.mon.getFullYear(), this.mon.getMonth(), this.mon.getDate() + i), date = p2(dt.getDate()) + '/' + p2(dt.getMonth() + 1);
         const evs = all.filter(e => e.d === i).sort((a, b) => tm(a.s) - tm(b.s)), ends = [];
         const pl = evs.map(e => { let l = 0; while (ends[l] !== undefined && ends[l] > tm(e.s)) l++; ends[l] = Math.max(tm(e.e), tm(e.s) + 20); return { e, l }; });
         const n = Math.max(1, ends.length);
         const blocks = pl.map(({ e, l }) => {
-          const c = this.mem(e.m).color, sub = `${e.s}–${e.e} · ${this.mem(e.m).name}` + (e.k && e.k !== 'Activité' ? ' · ' + e.k : '');
+          const c = this.mem(e.m).color, sub = `${e.s}–${e.e} · ${this.mem(e.m).name}` + (e.k && e.k !== 'Activité' ? ' · ' + e.k : '') + (e.w ? '' : ' · chaque semaine');
           return { e, sub, title: e.t + ' – ' + sub, style: { top: (tm(e.s) - lo * 60) * PX / 60 + 'px', height: Math.max((tm(e.e) - tm(e.s)) * PX / 60, 20) + 'px', left: l * 100 / n + '%', width: 100 / n + '%', background: c + '26', borderColor: c } };
         });
-        return { i, name, blocks, range: evs.length ? evs[0].s + '–' + evs.reduce((a, e) => e.e > a ? e.e : a, '00:00') : '' };
+        return { i, name, date, today: this.off === 0 && i === todayIdx, blocks, range: evs.length ? evs[0].s + '–' + evs.reduce((a, e) => e.e > a ? e.e : a, '00:00') : '' };
       });
       return { lo, hi, H: (hi - lo) * PX, hours, cols };
     }
   },
   methods: {
+    can(...ids) { ids = ids.filter(Boolean); return !!this.me && (this.me.admin || !ids.length || ids.includes(this.me.id)); },
+    go(n) { this.off = n === 0 ? 0 : this.off + n; },
     mem(id) { return (this.st && this.st.members.find(m => m.id === id)) || { name: '?', color: '#888' }; },
     async api(method, url, body) {
       let r;
@@ -58,7 +69,7 @@ Vue.createApp({
     },
     async call(method, url, body) { this.err = ''; try { await this.api(method, url, body); await this.refresh(); } catch (e) { this.err = e.message; } },
     async add(name, body, done) { this.err = ''; try { await this.api('POST', '/' + name, body); done && done(); await this.refresh(); } catch (e) { this.err = e.message; } },
-    async refresh() { this.st = await this.api('GET', '/state'); this.members = this.st.members; if (!this.f.m) this.f.m = this.me.id; if (!this.nm2) this.nm2 = this.me.id; },
+    async refresh() { this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === this.me.id) || this.me; if (!this.f.m) this.f.m = this.me.id; if (!this.nm2) this.nm2 = this.me.id; if (!this.im) this.im = this.me.id; },
     async loadMembers() { try { this.members = await this.api('GET', '/members'); this.err = ''; } catch (e) { this.err = e.message; } },
     pick(m) { this.sel = m; this.pin = this.pin2 = this.err = ''; },
     async enter() {
@@ -70,12 +81,12 @@ Vue.createApp({
       } catch (e) { this.err = e.message; this.pin = this.pin2 = ''; }
     },
     async start() {
-      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = id; }
+      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = this.im = id; }
       catch { this.logout(true); }
     },
     async logout(silent) {
       if (!silent && this.token) { try { await this.api('POST', '/logout'); } catch {} }
-      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = ''; this.loadMembers();
+      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = this.im = ''; this.off = 0; this.loadMembers();
     },
     async addMember() {
       this.err = '';
@@ -91,19 +102,19 @@ Vue.createApp({
     },
     async resetPin(m) { if (m.hasPin && confirm('Réinitialiser le PIN de ' + m.name + ' ?')) { await this.call('POST', '/members/' + m.id + '/reset-pin'); if (m.id === this.me.id) this.logout(true); } },
     async delMember(m) { if (confirm('Supprimer ' + m.name + ', ses activités et ses tâches ?')) { await this.call('DELETE', '/members/' + m.id); if (m.id === this.me.id) this.logout(true); if (this.filter === m.id) this.filter = null; } },
-    async addEvent() { this.err2 = ''; try { await this.api('POST', '/events', this.f); this.f.t = ''; await this.refresh(); } catch (e) { this.err2 = e.message; } },
+    async addEvent() { this.err2 = ''; try { await this.api('POST', '/events', { ...this.f, w: this.wIso }); this.f.t = ''; await this.refresh(); } catch (e) { this.err2 = e.message; } },
     async saveTpl() {
       this.err2 = ''; if (!this.f.t.trim()) return;
       try { await this.api('POST', '/tpl', this.f); await this.refresh(); } catch (e) { this.err2 = e.message; }
     },
-    async applyTpl(t) { this.err = ''; try { await this.api('POST', '/tpl/' + t.id + '/apply', { m: this.filter || this.me.id, d: todayIdx }); await this.refresh(); } catch (e) { this.err = e.message; } },
+    async applyTpl(t) { this.err = ''; try { await this.api('POST', '/tpl/' + t.id + '/apply', { m: this.filter || this.me.id, d: this.off === 0 ? todayIdx : 0, w: this.wIso }); await this.refresh(); } catch (e) { this.err = e.message; } },
     importIcs() {
       if (!this.icsFile) { this.msg = 'Choisissez d’abord un fichier .ics.'; return; }
       const rd = new FileReader();
       rd.onload = async () => {
-        const now = new Date(), mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - todayIdx), end = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7);
+        const mon = this.mon, end = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7);
         const events = parseIcs(String(rd.result)).filter(x => x.s >= mon && x.s < end).map(x => ({ d: (x.s.getDay() + 6) % 7, s: hm(x.s), e: hm(x.e), t: x.t }));
-        try { const r = await this.api('POST', '/events/import', { m: this.f.m, events }); this.msg = r.n + ' événement(s) importé(s) pour la semaine en cours.' + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : ''); await this.refresh(); }
+        try { const r = await this.api('POST', '/events/import', { m: this.im, w: this.wIso, events }); this.msg = r.n + ' événement(s) importé(s) pour la semaine affichée.' + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : ''); await this.refresh(); }
         catch (e) { this.msg = e.message; }
       };
       rd.readAsText(this.icsFile);

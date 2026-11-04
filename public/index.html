@@ -105,6 +105,12 @@
         </nav>
         <main>
           <template v-if="tab==='plan'">
+            <div class="wknav">
+              <button class="btn" @click="go(-1)" aria-label="Semaine précédente">‹</button>
+              <button class="chip" @click="go(0)" :disabled="off===0">Cette semaine</button>
+              <button class="btn" @click="go(1)" aria-label="Semaine suivante">›</button>
+              <strong>{{ weekLabel }}</strong>
+            </div>
             <div class="tool">
               <select v-model="filter" aria-label="Personne">
                 <option :value="null">Tout le monde</option>
@@ -154,12 +160,12 @@
               </div>
               <div
                 class="dc"
-                :class="{today:c.i===todayIdx}"
+                :class="{today:c.today}"
                 v-for="c in grid.cols"
                 :key="c.i"
               >
                 <div class="dh">
-                  {{ c.name }}
+                  <span>{{ c.name }} {{ c.date }}</span>
                   <small class="mu" v-if="c.range">{{ c.range }}</small>
                 </div>
                 <div class="db" :style="{height:grid.H+'px'}">
@@ -172,7 +178,7 @@
                   >
                     <b>{{ b.e.t }}</b><small>{{ b.sub }}</small>
                     <button
-                      v-if="b.e.g"
+                      v-if="b.e.g && can(b.e.m,b.e.o)"
                       class="x x2"
                       title="Supprimer toute la série"
                       aria-label="Supprimer toute la série"
@@ -182,6 +188,7 @@
                     </button>
                     <button
                       class="x"
+                      v-if="can(b.e.m,b.e.o)"
                       aria-label="Supprimer"
                       @click="call('DELETE','/events/'+b.e.id)"
                     >
@@ -228,7 +235,8 @@
                     <option value="all">Tous les jours</option>
                   </select></label
                 >
-                <label>Début<input type="time" v-model="f.s" /></label
+                <label>Chaque semaine<input type="checkbox" v-model="f.rec" /></label
+                ><label>Début<input type="time" v-model="f.s" /></label
                 ><label>Fin<input type="time" v-model="f.e" /></label>
                 <button class="btn">Ajouter</button
                 ><button
@@ -255,6 +263,7 @@
                   <button
                     class="x"
                     aria-label="Supprimer le raccourci"
+                    v-if="can(t.o)"
                     @click="call('DELETE','/tpl/'+t.id)"
                   >
                     ×
@@ -263,14 +272,14 @@
               </p>
               <div class="bar">
                 <label
-                  >Importer un agenda (.ics) : semaine en cours<input
+                  >Importer un agenda (.ics) : semaine affichée<input
                     type="file"
                     accept=".ics,text/calendar"
                     @change="icsFile=$event.target.files[0]"
                 /></label>
                 <label
-                  >Pour<select v-model="f.m">
-                    <option v-for="m in st.members" :key="m.id" :value="m.id">
+                  >Pour<select v-model="im">
+                    <option v-for="m in impList" :key="m.id" :value="m.id">
                       {{ m.name }}
                     </option>
                   </select></label
@@ -314,6 +323,7 @@
                 ><button
                   class="x"
                   aria-label="Supprimer"
+                  v-if="can(t.m,t.o)"
                   @click="call('DELETE','/tasks/'+t.id)"
                 >
                   ×
@@ -354,6 +364,7 @@
                 ><button
                   class="x"
                   aria-label="Supprimer"
+                  v-if="can(t.o)"
                   @click="call('DELETE','/shop/'+t.id)"
                 >
                   ×
@@ -407,6 +418,7 @@
                 ><button
                   class="x"
                   aria-label="Supprimer"
+                  v-if="can(k.o)"
                   @click="call('DELETE','/links/'+k.id)"
                 >
                   ×
@@ -476,24 +488,30 @@
                 <span class="dot" :style="{background:m.color}"></span
                 ><span class="t"
                   >{{ m.name }}
-                  <small class="mu" v-if="m.id===me.id">(vous)</small></span
+                  <small class="mu" v-if="m.id===me.id">(vous)</small>
+                  <small class="mu" v-if="m.admin">(admin)</small></span
                 >
                 <button
                   class="x"
                   style="font-size: 0.8rem; text-decoration: underline"
+                  v-if="me.admin || m.id===me.id"
                   @click="resetPin(m)"
                 >
                   {{ m.hasPin ? 'Réinitialiser le PIN' : 'PIN non défini' }}
                 </button>
-                <button class="x" aria-label="Supprimer" @click="delMember(m)">
+                <button
+                  class="x"
+                  aria-label="Supprimer"
+                  v-if="!m.admin && (me.admin || m.id===me.id)"
+                  @click="delMember(m)"
+                >
                   ×
                 </button>
               </li>
             </ul>
             <p class="note">
               Supprimer un membre retire aussi ses activités et ses tâches. Le
-              PIN est vérifié par le serveur ; un PIN oublié peut être
-              réinitialisé par un autre membre connecté. Les données sont
+              PIN est vérifié par le serveur ; seul l’administrateur peut réinitialiser le PIN d’un autre membre. Chacun ne peut supprimer que ce qui lui appartient. Les données sont
               partagées par toute la famille.
             </p>
           </template>
