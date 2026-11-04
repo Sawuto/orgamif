@@ -54,7 +54,7 @@ const evBody = b => {
 };
 
 const app = express();
-app.use(express.json({ limit: '200kb' }));
+app.use(express.json({ limit: '3mb' }));
 // Profil créé une seule fois au premier démarrage (changez le PIN après connexion, onglet Membres)
 const SEED = { name: 'Enzo', color: '#2f6b5a', pin: { salt: '0fc9a081ea144eb6', hash: 'c6a9433818c75a5c55da19e549667410ea7216ac3a0732672477578e240a5e03' } };
 async function seed() {
@@ -157,19 +157,20 @@ app.delete('/api/series/:g', A, async (q, s) => {
   db.events = db.events.filter(e => e.g !== q.params.g); await save(); s.json({});
 });
 app.post('/api/events/import', A, async (q, s) => {
-  const m = q.body.m, w = mondayOf(q.body.w), list = Array.isArray(q.body.events) ? q.body.events.slice(0, 500) : [];
+  const m = q.body.m, list = Array.isArray(q.body.events) ? q.body.events.slice(0, 3000) : [];
   if (!mem(m)) return bad(s, 'Personne inconnue.');
-  if (!w) return bad(s, 'Semaine invalide.');
   if (!q.me.admin && m !== q.me.id) return bad(s, 'Vous ne pouvez importer un agenda que pour vous-même.', 403);
-  db.events = db.events.filter(e => !(e.src === 'ics' && e.m === m && (!e.w || e.w === w)));
+  db.events = db.events.filter(e => !(e.src === 'ics' && e.m === m)); // remplace l'import précédent de cette personne
+  const mine = db.events.filter(e => e.m === m);
   let n = 0, cf = 0;
   list.forEach(x => {
-    if (!(x.d >= 0 && x.d <= 6) || !okT(x.s) || !okT(x.e)) return;
-    const o = { id: uid(), m, d: x.d, s: x.s, e: x.e, t: String(x.t || 'Sans titre').slice(0, 120), k: 'Cours', src: 'ics', w, o: q.me.id };
-    if (db.events.some(b => b.src !== 'ics' && b.m === m && b.d === o.d && (!b.w || b.w === w) && tm(o.s) < tm(b.e) && tm(b.s) < tm(o.e))) cf++;
+    const w = mondayOf(x.w);
+    if (!w || !(x.d >= 0 && x.d <= 6) || !okT(x.s) || !okT(x.e)) return;
+    const o = { id: uid(), m, d: x.d, s: x.s, e: x.e, t: String(x.t || 'Sans titre').slice(0, 120), k: 'Cours', src: 'ics', w };
+    if (mine.some(b => b.d === o.d && (!b.w || b.w === w) && tm(o.s) < tm(b.e) && tm(b.s) < tm(o.e))) cf++;
     db.events.push(o); n++;
   });
-  await save(); s.json({ n, cf });
+  await save(); s.json({ n, cf, cut: (Array.isArray(q.body.events) ? q.body.events.length : 0) > 3000 });
 });
 
 // raccourcis

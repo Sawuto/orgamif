@@ -112,9 +112,9 @@ Vue.createApp({
       if (!this.icsFile) { this.msg = 'Choisissez d’abord un fichier .ics.'; return; }
       const rd = new FileReader();
       rd.onload = async () => {
-        const mon = this.mon, end = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7);
-        const events = parseIcs(String(rd.result)).filter(x => x.s >= mon && x.s < end).map(x => ({ d: (x.s.getDay() + 6) % 7, s: hm(x.s), e: hm(x.e), t: x.t }));
-        try { const r = await this.api('POST', '/events/import', { m: this.im, w: this.wIso, events }); this.msg = r.n + ' événement(s) importé(s) pour la semaine affichée.' + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : ''); await this.refresh(); }
+        const events = parseIcs(String(rd.result)).map(x => ({ w: iso(new Date(x.s.getFullYear(), x.s.getMonth(), x.s.getDate() - (x.s.getDay() + 6) % 7)), d: (x.s.getDay() + 6) % 7, s: hm(x.s), e: hm(x.e), t: x.t }));
+        if (!events.length) { this.msg = 'Aucun événement trouvé dans ce fichier.'; return; }
+        try { const r = await this.api('POST', '/events/import', { m: this.im, events }); this.msg = r.n + ' événement(s) importé(s) sur toutes les semaines du fichier.' + (r.cut ? ' Le fichier dépasse 3000 événements : la fin a été ignorée.' : '') + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : ''); await this.refresh(); }
         catch (e) { this.msg = e.message; }
       };
       rd.readAsText(this.icsFile);
