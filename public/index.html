@@ -198,94 +198,86 @@
                 </div>
               </div>
             </div>
-            <details class="more">
-              <summary>Ajouter un événement ou importer un agenda</summary>
+            <details class="more" open>
+              <summary>Ajouter un événement</summary>
               <form class="bar" @submit.prevent="addEvent()">
-                <label
-                  >Titre<input
-                    v-model="f.t"
-                    placeholder="Ex. : Piano, réunion parents"
-                /></label>
-                <label
-                  >Type<select v-model="f.k">
-                    <option>Activité</option>
-                    <option>Réunion</option>
-                    <option>Cours</option>
-                  </select></label
-                >
-                <label
-                  >Qui<select v-model="f.m">
-                    <option v-for="m in st.members" :key="m.id" :value="m.id">
-                      {{ m.name }}
-                    </option>
-                  </select></label
-                >
-                <label
-                  >Jour<select v-model.number="f.d">
-                    <option v-for="(d,i) in DAYS" :key="i" :value="i">
-                      {{ d }}
-                    </option>
-                  </select></label
-                >
-                <label
-                  >Répéter<select v-model="f.r">
-                    <option value="one">Ce jour seulement</option>
-                    <option value="wk">Lundi à vendredi</option>
-                    <option value="we">Week-end</option>
-                    <option value="all">Tous les jours</option>
-                  </select></label
-                >
-                <label>Chaque semaine<input type="checkbox" v-model="f.rec" /></label
-                ><label>Début<input type="time" v-model="f.s" /></label
-                ><label>Fin<input type="time" v-model="f.e" /></label>
-                <button class="btn">Ajouter</button
-                ><button
-                  type="button"
-                  class="x"
-                  style="text-decoration: underline"
-                  @click="saveTpl()"
-                >
-                  Enregistrer comme raccourci
-                </button>
-                <p
-                  class="err"
-                  role="alert"
-                  v-if="err2"
-                  style="flex-basis: 100%; margin: 0"
-                >
-                  {{ err2 }}
-                </p>
+                <label class="w100">Titre<input v-model="f.t" placeholder="Ex. : Piano, réunion parents" /></label>
+                <div class="fld w100">
+                  <span class="lb">Qui participe ? (une ou plusieurs personnes)</span>
+                  <div class="chips">
+                    <button type="button" class="chip" v-for="m in st.members" :key="m.id" :aria-pressed="f.ms.includes(m.id)" @click="togMs(m.id)">
+                      <span class="dot" :style="{background:m.color}"></span>{{ m.name }}
+                    </button>
+                  </div>
+                </div>
+                <div class="fld w100">
+                  <span class="lb">Type</span>
+                  <div class="chips">
+                    <button type="button" class="chip" v-for="k in ['Activité','Réunion','Cours']" :key="k" :aria-pressed="f.k===k" @click="f.k=k">{{ k }}</button>
+                  </div>
+                </div>
+                <div class="fld w100">
+                  <span class="lb">Jour</span>
+                  <div class="chips">
+                    <button type="button" class="chip" v-for="(d,i) in DAYS" :key="i" :aria-pressed="f.r==='one' && f.d===i" :disabled="f.r!=='one'" @click="f.d=i">{{ d.slice(0,3) }}</button>
+                  </div>
+                </div>
+                <div class="fld w100">
+                  <span class="lb">Répétition</span>
+                  <div class="chips">
+                    <button type="button" class="chip" v-for="r in [['one','Ce jour'],['wk','Lundi–vendredi'],['we','Week-end'],['all','Tous les jours']]" :key="r[0]" :aria-pressed="f.r===r[0]" @click="f.r=r[0]">{{ r[1] }}</button>
+                    <button type="button" class="chip" :aria-pressed="f.rec" @click="f.rec=!f.rec">↻ Chaque semaine</button>
+                  </div>
+                </div>
+                <div class="fld">
+                  <span class="lb">Début</span>
+                  <input type="time" step="300" :value="f.s" @change="setStart($event.target.value)" />
+                </div>
+                <div class="fld">
+                  <span class="lb">Fin</span>
+                  <input type="time" step="300" v-model="f.e" />
+                </div>
+                <div class="fld">
+                  <span class="lb">Durée : {{ durLabel }}</span>
+                  <div class="chips">
+                    <button type="button" class="chip" v-for="d in [30,45,60,90,120,180]" :key="d" :aria-pressed="dur===d" @click="setDur(d)">{{ durTxt(d) }}</button>
+                  </div>
+                </div>
+                <div class="w100">
+                  <button class="btn">Ajouter</button>
+                  <button type="button" class="x" style="text-decoration: underline" @click="saveTpl()">Enregistrer comme raccourci</button>
+                </div>
+                <p class="err" role="alert" v-if="err2" style="flex-basis: 100%; margin: 0">{{ err2 }}</p>
               </form>
               <p class="note" v-if="st.tpl.length">
                 Raccourcis enregistrés :
-                <span v-for="t in st.tpl" :key="t.id"
-                  >{{ t.t }} {{ t.s }}–{{ t.e }}
-                  <button
-                    class="x"
-                    aria-label="Supprimer le raccourci"
-                    v-if="can(t.o)"
-                    @click="call('DELETE','/tpl/'+t.id)"
-                  >
-                    ×
-                  </button>
+                <span v-for="t in st.tpl" :key="t.id">{{ t.t }} {{ t.s }}–{{ t.e }}
+                  <button class="x" aria-label="Supprimer le raccourci" v-if="can(t.o)" @click="call('DELETE','/tpl/'+t.id)">×</button>
                 </span>
               </p>
+            </details>
+            <details class="more">
+              <summary>Importer un emploi du temps</summary>
               <div class="bar">
-                <label
-                  >Importer un agenda (.ics) : toutes les semaines du fichier<input
-                    type="file"
-                    accept=".ics,text/calendar"
-                    @change="icsFile=$event.target.files[0]"
-                /></label>
-                <label
-                  >Pour<select v-model="im">
-                    <option v-for="m in impList" :key="m.id" :value="m.id">
-                      {{ m.name }}
-                    </option>
-                  </select></label
-                ><button class="btn" @click="importIcs()">Importer</button>
+                <label>Pour
+                  <select v-model="im"><option v-for="m in impList" :key="m.id" :value="m.id">{{ m.name }}</option></select>
+                </label>
+              </div>
+              <div class="bar">
+                <label class="grow">Lien de l’agenda (adresse d’export .ics / webcal)
+                  <input v-model="icsUrl" placeholder="https://…" autocomplete="off" />
+                </label>
+                <button class="btn" type="button" @click="importUrl()">Importer le lien</button>
+                <button class="x" type="button" v-if="st.ics && st.ics[im]" @click="importUrl(true)">↻ Actualiser depuis le lien enregistré</button>
+              </div>
+              <div class="bar">
+                <label>… ou un fichier .ics (toutes les semaines du fichier)
+                  <input type="file" accept=".ics,text/calendar" @change="icsFile=$event.target.files[0]" />
+                </label>
+                <button class="btn" type="button" @click="importIcs()">Importer le fichier</button>
               </div>
               <p class="note" v-if="msg">{{ msg }}</p>
+              <p class="note">Chaque import remplace le précédent pour cette personne. Le lien est mémorisé pour pouvoir actualiser en un clic.</p>
             </details>
           </template>
 
