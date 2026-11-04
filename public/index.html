@@ -510,6 +510,25 @@
           <p class="err" v-if="err && tab!=='plan'" role="alert">{{ err }}</p>
         </main>
       </template>
+      <div class="modal" v-if="conf" @click.self="conf=null">
+        <div class="mbox" role="alertdialog" aria-modal="true" aria-labelledby="ctitle">
+          <h2 id="ctitle">⚠ Deux événements en même temps</h2>
+          <p>
+            Le nouvel événement <b>{{ conf.nv.t }}</b> ({{ conf.nv.s }}–{{ conf.nv.e }}, {{ conf.nv.who }})
+            chevauche {{ conf.total > 1 ? conf.total + ' événements' : 'un événement' }} :
+          </p>
+          <ul class="clist">
+            <li v-for="c in conf.list" :key="c.id"><b>{{ c.t }}</b> · {{ c.who }} · {{ c.d }} {{ c.s }}–{{ c.e }}</li>
+          </ul>
+          <p>Que voulez-vous garder ?</p>
+          <div class="mact">
+            <button class="btn" type="button" @click="resolve('both')">Garder les deux</button>
+            <button class="btn" type="button" :disabled="conf.list.some(c=>!c.rm)" @click="resolve('new')">Garder seulement le nouveau</button>
+            <button class="btn alt" type="button" @click="resolve('old')">Garder seulement l’ancien</button>
+          </div>
+          <p class="note" v-if="conf.list.some(c=>!c.rm)">« Garder seulement le nouveau » est indisponible : un des événements appartient à quelqu’un d’autre.</p>
+        </div>
+      </div>
     </div>
     <script src="vendor/vue.global.prod.js"></script>
     <script src="app.js"></script>

@@ -34,17 +34,20 @@ async function session(id) { const tk = crypto.randomBytes(24).toString('hex'); 
 const pub = m => ({ id: m.id, name: m.name, color: m.color, hasPin: !!m.pin, admin: !!m.admin });
 
 // Ajout (avec répétition) + contrôle de chevauchement pour une même personne
-function addRep(ms, d, s, e, t, k, r, w, by) {
+function addRep(ms, d, s, e, t, k, r, w, by, mode, ok) {
   const ds = { wk: [0, 1, 2, 3, 4], we: [5, 6], all: [0, 1, 2, 3, 4, 5, 6] }[r] || [d];
   if (tm(e) <= tm(s)) return 'L’heure de fin doit être après l’heure de début.';
-  for (const m of ms) {
-    const bad = [];
-    ds.forEach(x => db.events.forEach(o => { if (o.m === m && o.d === x && (!o.w || !w || o.w === w) && tm(s) < tm(o.e) && tm(o.s) < tm(e)) bad.push(o); }));
-    if (bad.length) { const b = bad[0]; return `Conflit : ${mem(m).name} a déjà « ${b.t} » le ${DAYS[b.d]} de ${b.s} à ${b.e}` + (bad.length > 1 ? `, et ${bad.length - 1} autre(s) conflit(s)` : '') + '. Rien n’a été ajouté.'; }
+  const conf = [];
+  ms.forEach(m => ds.forEach(x => db.events.forEach(o => { if (o.m === m && o.d === x && (!o.w || !w || o.w === w) && tm(s) < tm(o.e) && tm(o.s) < tm(e) && !conf.includes(o)) conf.push(o); })));
+  if (conf.length && !mode) return { conflicts: conf.slice(0, 20).map(o => ({ id: o.id, who: mem(o.m).name, t: o.t, d: DAYS[o.d], s: o.s, e: o.e, rm: ok(o) })), total: conf.length };
+  if (conf.length && mode === 'new') {
+    if (conf.some(o => !ok(o))) return 'Vous ne pouvez pas remplacer un événement qui appartient à quelqu’un d’autre : choisissez « Garder les deux ».';
+    db.events = db.events.filter(o => !conf.includes(o));
   }
   ms.forEach(m => { const g = ds.length > 1 ? uid() : undefined; ds.forEach(x => db.events.push({ id: uid(), m, d: x, s, e, t, k, ...(w && { w }), ...(by && { o: by }), ...(g && { g }) })); });
   return '';
 }
+const confRes = (s, r) => typeof r === 'string' ? bad(s, r, 409) : s.status(409).json({ error: 'Deux événements se chevauchent.', conflicts: r.conflicts, total: r.total });
 const evBody = b => {
   const t = String(b.t || '').trim().slice(0, 80), d = Number(b.d), r = b.r || 'one';
   if (!t) return { error: 'Donnez un titre à l’événement.' };
@@ -147,7 +150,7 @@ app.post('/api/members/:id/reset-pin', A, async (q, s) => {
 // événements
 app.post('/api/events', A, async (q, s) => {
   const b = evBody(q.body); if (b.error) return bad(s, b.error);
-  const err = addRep(b.ms, b.d, b.s, b.e, b.t, b.k, b.r, b.w, q.me.id); if (err) return bad(s, err, 409);
+  const err = addRep(b.ms, b.d, b.s, b.e, b.t, b.k, b.r, b.w, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o)); if (err) return confRes(s, err);
   await save(); s.json({});
 });
 app.delete('/api/events/:id', A, async (q, s) => {
@@ -252,7 +255,7 @@ app.delete('/api/tpl/:id', A, async (q, s) => {
 app.post('/api/tpl/:id/apply', A, async (q, s) => {
   const t = db.tpl.find(x => x.id === q.params.id); if (!t) return bad(s, 'Raccourci inconnu.', 404);
   if (!mem(q.body.m)) return bad(s, 'Personne inconnue.');
-  const err = addRep([q.body.m], Number(q.body.d) || 0, t.s, t.e, t.t, t.k, t.r, mondayOf(q.body.w) || undefined, q.me.id); if (err) return bad(s, err, 409);
+  const err = addRep([q.body.m], Number(q.body.d) || 0, t.s, t.e, t.t, t.k, t.r, mondayOf(q.body.w) || undefined, q.me.id, ['both', 'new'].includes(q.body.mode) ? q.body.mode : undefined, o => can(q, o.m, o.o)); if (err) return confRes(s, err);
   await save(); s.json({});
 });
 

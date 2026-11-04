@@ -24,7 +24,7 @@ Vue.createApp({
   data: () => ({
     DAYS, todayIdx, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     token: store.get('maison-token') || '', me: null, members: [], st: null, sel: null, pin: '', pin2: '', err: '', err2: '', msg: '',
-    off: 0, im: '', icsUrl: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
+    off: 0, conf: null, im: '', icsUrl: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
     filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, cp: { o: '', n: '', n2: '' }, lk: { t: '', k: 'Lien', u: '', i: '' },
     f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, ms: [], s: '08:00', e: '09:00' }
   }),
@@ -82,7 +82,7 @@ Vue.createApp({
       try { r = await fetch('/api' + url, { method, headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
       catch { throw new Error('Serveur injoignable. Lancez « npm start » puis ouvrez http://localhost:3000 (et non le fichier index.html).'); }
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { if (j.auth) this.logout(true); throw new Error(j.error || 'Le serveur ne répond pas correctement (erreur ' + r.status + '). L’API Express est-elle bien déployée ?'); }
+      if (!r.ok) { if (j.auth) this.logout(true); const er = new Error(j.error || 'Le serveur ne répond pas correctement (erreur ' + r.status + '). L’API Express est-elle bien déployée ?'); if (j.conflicts) { er.conflicts = j.conflicts; er.total = j.total; } throw er; }
       return j;
     },
     async call(method, url, body) { this.err = ''; try { await this.api(method, url, body); await this.refresh(); } catch (e) { this.err = e.message; } },
@@ -120,12 +120,28 @@ Vue.createApp({
     },
     async resetPin(m) { if (m.hasPin && confirm('Réinitialiser le PIN de ' + m.name + ' ?')) { await this.call('POST', '/members/' + m.id + '/reset-pin'); if (m.id === this.me.id) this.logout(true); } },
     async delMember(m) { if (confirm('Supprimer ' + m.name + ', ses activités et ses tâches ?')) { await this.call('DELETE', '/members/' + m.id); if (m.id === this.me.id) this.logout(true); if (this.filter === m.id) this.filter = null; } },
-    async addEvent() { this.err2 = ''; try { await this.api('POST', '/events', { ...this.f, w: this.wIso }); this.f.t = ''; await this.refresh(); } catch (e) { this.err2 = e.message; } },
+    async addEvent(mode) {
+      this.err2 = '';
+      try { await this.api('POST', '/events', { ...this.f, w: this.wIso, mode }); this.f.t = ''; this.conf = null; await this.refresh(); }
+      catch (e) {
+        if (e.conflicts) this.conf = { kind: 'event', list: e.conflicts, total: e.total, nv: { t: this.f.t.trim() || 'Nouvel événement', s: this.f.s, e: this.f.e, who: this.f.ms.map(id => this.mem(id).name).join(', ') } };
+        else { this.conf = null; this.err2 = e.message; }
+      }
+    },
     async saveTpl() {
       this.err2 = ''; if (!this.f.t.trim()) return;
       try { await this.api('POST', '/tpl', this.f); await this.refresh(); } catch (e) { this.err2 = e.message; }
     },
-    async applyTpl(t) { this.err = ''; try { await this.api('POST', '/tpl/' + t.id + '/apply', { m: this.filter || this.me.id, d: this.off === 0 ? todayIdx : 0, w: this.wIso }); await this.refresh(); } catch (e) { this.err = e.message; } },
+    async applyTpl(t, mode) {
+      this.err = '';
+      const who = this.filter || this.me.id;
+      try { await this.api('POST', '/tpl/' + t.id + '/apply', { m: who, d: this.off === 0 ? todayIdx : 0, w: this.wIso, mode }); this.conf = null; await this.refresh(); }
+      catch (e) {
+        if (e.conflicts) this.conf = { kind: 'tpl', tpl: t, list: e.conflicts, total: e.total, nv: { t: t.t, s: t.s, e: t.e, who: this.mem(who).name } };
+        else { this.conf = null; this.err = e.message; }
+      }
+    },
+    resolve(mode) { const c = this.conf; if (!c) return; if (mode === 'old') { this.conf = null; return; } c.kind === 'tpl' ? this.applyTpl(c.tpl, mode) : this.addEvent(mode); },
     importIcs() {
       if (!this.icsFile) { this.msg = 'Choisissez d’abord un fichier .ics.'; return; }
       const rd = new FileReader();
@@ -140,6 +156,7 @@ Vue.createApp({
     copy(t, ev) { try { navigator.clipboard.writeText(t); ev.target.textContent = 'Copié'; } catch {} }
   },
   async mounted() {
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') this.conf = null; });
     await this.loadMembers();
     if (this.token) await this.start();
     setInterval(() => { if (this.me && !document.hidden) this.refresh().catch(() => {}); }, 15000); // synchro famille
