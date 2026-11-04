@@ -24,9 +24,9 @@ Vue.createApp({
   data: () => ({
     DAYS, todayIdx, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     token: store.get('maison-token') || '', me: null, members: [], st: null, sel: null, pin: '', pin2: '', err: '', err2: '', msg: '',
-    off: 0, im: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
+    off: 0, im: '', icsUrl: '', tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
     filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, cp: { o: '', n: '', n2: '' }, lk: { t: '', k: 'Lien', u: '', i: '' },
-    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, s: '08:00', e: '09:00' }
+    f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', rec: false, ms: [], s: '08:00', e: '09:00' }
   }),
   computed: {
     mon() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() - todayIdx + 7 * this.off); },
@@ -35,6 +35,8 @@ Vue.createApp({
       const a = this.mon, b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6), o = { day: 'numeric', month: 'long' };
       return 'Semaine du ' + a.toLocaleDateString('fr-FR', o) + ' au ' + b.toLocaleDateString('fr-FR', { ...o, year: 'numeric' });
     },
+    dur() { return tm(this.f.e) - tm(this.f.s); },
+    durLabel() { return this.dur > 0 ? this.durTxt(this.dur) : 'la fin doit suivre le début'; },
     impList() { return this.st.members.filter(m => this.me.admin || m.id === this.me.id); },
     grid() {
       const PX = 44, all = this.st.events.filter(e => (!e.w || e.w === this.wIso) && (!this.filter || e.m === this.filter) && (!this.kf || (this.kf === 'Cours') === ['Cours', 'TP', 'TD', 'Autonomie'].includes(e.k)));
@@ -57,6 +59,22 @@ Vue.createApp({
   },
   methods: {
     can(...ids) { ids = ids.filter(Boolean); return !!this.me && (this.me.admin || !ids.length || ids.includes(this.me.id)); },
+    fmtT(min) { min = Math.max(0, Math.min(Math.round(min), 1439)); return p2(Math.floor(min / 60)) + ':' + p2(min % 60); },
+    durTxt(d) { return d < 60 ? d + ' min' : Math.floor(d / 60) + ' h' + (d % 60 ? p2(d % 60) : ''); },
+    setStart(v) { if (!v) return; const d = this.dur > 0 ? this.dur : 60; this.f.s = v; this.f.e = this.fmtT(tm(v) + d); },
+    setDur(d) { this.f.e = this.fmtT(tm(this.f.s) + d); },
+    togMs(id) { const i = this.f.ms.indexOf(id); if (i < 0) this.f.ms.push(id); else this.f.ms.splice(i, 1); },
+    async importUrl(re) {
+      this.msg = this.err = '';
+      const body = { m: this.im };
+      if (!re) { if (!this.icsUrl.trim()) { this.msg = 'Collez d’abord le lien de l’agenda.'; return; } body.url = this.icsUrl.trim(); }
+      this.msg = 'Import en cours…';
+      try {
+        const r = await this.api('POST', '/events/import-url', body);
+        this.msg = r.n + ' cours importé(s) sur toute la période du calendrier.' + (r.cut ? ' Le calendrier dépasse 3000 événements : la fin a été ignorée.' : '') + (r.cf ? ' Attention : ' + r.cf + ' conflit(s) d’horaire avec des événements existants.' : '');
+        this.icsUrl = ''; await this.refresh();
+      } catch (e) { this.msg = e.message; }
+    },
     go(n) { this.off = n === 0 ? 0 : this.off + n; },
     mem(id) { return (this.st && this.st.members.find(m => m.id === id)) || { name: '?', color: '#888' }; },
     async api(method, url, body) {
@@ -81,12 +99,12 @@ Vue.createApp({
       } catch (e) { this.err = e.message; this.pin = this.pin2 = ''; }
     },
     async start() {
-      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = this.im = id; }
+      try { const { id } = await this.api('GET', '/me'); this.st = await this.api('GET', '/state'); this.members = this.st.members; this.me = this.members.find(m => m.id === id); this.f.m = this.nm2 = this.im = id; this.f.ms = [id]; }
       catch { this.logout(true); }
     },
     async logout(silent) {
       if (!silent && this.token) { try { await this.api('POST', '/logout'); } catch {} }
-      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = this.im = ''; this.off = 0; this.loadMembers();
+      this.token = ''; store.set('maison-token', ''); this.me = null; this.st = null; this.sel = null; this.filter = null; this.f.m = this.nm2 = this.im = ''; this.f.ms = []; this.off = 0; this.loadMembers();
     },
     async addMember() {
       this.err = '';
