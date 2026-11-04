@@ -24,7 +24,7 @@ Vue.createApp({
     DAYS, todayIdx, today: new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     token: store.get('maison-token') || '', me: null, members: [], st: null, sel: null, pin: '', pin2: '', err: '', err2: '', msg: '',
     tab: 'plan', tabs: [['plan', 'Planning'], ['tasks', 'Tâches'], ['shop', 'Courses'], ['links', 'Liens'], ['members', 'Membres']],
-    filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, lk: { t: '', k: 'Lien', u: '', i: '' },
+    filter: null, kf: null, icsFile: null, nt: '', ns: '', nm2: '', nm: { name: '', color: '#0e7490' }, cp: { o: '', n: '', n2: '' }, lk: { t: '', k: 'Lien', u: '', i: '' },
     f: { t: '', k: 'Activité', m: '', d: todayIdx, r: 'one', s: '08:00', e: '09:00' }
   }),
   computed: {
@@ -49,15 +49,17 @@ Vue.createApp({
   methods: {
     mem(id) { return (this.st && this.st.members.find(m => m.id === id)) || { name: '?', color: '#888' }; },
     async api(method, url, body) {
-      const r = await fetch('/api' + url, { method, headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      let r;
+      try { r = await fetch('/api' + url, { method, headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
+      catch { throw new Error('Serveur injoignable. Lancez « npm start » puis ouvrez http://localhost:3000 (et non le fichier index.html).'); }
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { if (j.auth) this.logout(true); throw new Error(j.error || 'Erreur'); }
+      if (!r.ok) { if (j.auth) this.logout(true); throw new Error(j.error || 'Le serveur ne répond pas correctement (erreur ' + r.status + '). L’API Express est-elle bien déployée ?'); }
       return j;
     },
     async call(method, url, body) { this.err = ''; try { await this.api(method, url, body); await this.refresh(); } catch (e) { this.err = e.message; } },
     async add(name, body, done) { this.err = ''; try { await this.api('POST', '/' + name, body); done && done(); await this.refresh(); } catch (e) { this.err = e.message; } },
     async refresh() { this.st = await this.api('GET', '/state'); this.members = this.st.members; if (!this.f.m) this.f.m = this.me.id; if (!this.nm2) this.nm2 = this.me.id; },
-    async loadMembers() { try { this.members = await this.api('GET', '/members'); } catch {} },
+    async loadMembers() { try { this.members = await this.api('GET', '/members'); this.err = ''; } catch (e) { this.err = e.message; } },
     pick(m) { this.sel = m; this.pin = this.pin2 = this.err = ''; },
     async enter() {
       this.err = '';
@@ -78,6 +80,14 @@ Vue.createApp({
     async addMember() {
       this.err = '';
       try { await this.api('POST', '/members', this.nm); this.nm = { name: '', color: '#0e7490' }; this.me ? await this.refresh() : await this.loadMembers(); } catch (e) { this.err = e.message; }
+    },
+    async changePin() {
+      this.msg = this.err = '';
+      try {
+        if (this.cp.n !== this.cp.n2) throw new Error('Les deux nouveaux codes sont différents.');
+        await this.api('POST', '/pin/change', { oldPin: this.cp.o, newPin: this.cp.n });
+        this.cp = { o: '', n: '', n2: '' }; this.msg = 'Code PIN modifié. Les autres appareils devront se reconnecter.';
+      } catch (e) { this.err = e.message; }
     },
     async resetPin(m) { if (m.hasPin && confirm('Réinitialiser le PIN de ' + m.name + ' ?')) { await this.call('POST', '/members/' + m.id + '/reset-pin'); if (m.id === this.me.id) this.logout(true); } },
     async delMember(m) { if (confirm('Supprimer ' + m.name + ', ses activités et ses tâches ?')) { await this.call('DELETE', '/members/' + m.id); if (m.id === this.me.id) this.logout(true); if (this.filter === m.id) this.filter = null; } },

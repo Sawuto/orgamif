@@ -53,8 +53,24 @@ const evBody = b => {
 
 const app = express();
 app.use(express.json({ limit: '200kb' }));
-if (U) app.use('/api', async (q, s, n) => { db = await load(); n(); });
-else app.use('/api', async (q, s, n) => { db = db || await load(); n(); });
+// Profil créé une seule fois au premier démarrage (changez le PIN après connexion, onglet Membres)
+const SEED = { name: 'Enzo', color: '#2f6b5a', pin: { salt: '0fc9a081ea144eb6', hash: 'c6a9433818c75a5c55da19e549667410ea7216ac3a0732672477578e240a5e03' } };
+async function seed() {
+  if (db.seeded) return;
+  db.seeded = true;
+  if (!db.members.some(m => m.name === SEED.name)) db.members.push({ id: uid(), name: SEED.name, color: SEED.color, pin: SEED.pin });
+  await save();
+}
+// Diagnostic : /api/health indique si la base est bien détectée et joignable
+app.get('/api/health', async (q, s) => {
+  const o = { stockage: U ? 'upstash' : 'fichier local', vercel: !!process.env.VERCEL, urlDetectee: !!U, jetonDetecte: !!T };
+  if (U) { try { o.redis = await rd(['PING']); } catch (e) { o.redis = 'erreur : ' + e.message; } }
+  s.json(o);
+});
+app.use('/api', (q, s, n) => process.env.VERCEL && !U
+  ? s.status(503).json({ error: 'Base de données non connectée : les variables KV_REST_API_URL et KV_REST_API_TOKEN sont introuvables sur ce déploiement. Ajoutez-les (Production), puis redéployez.' })
+  : n());
+app.use('/api', async (q, s, n) => { db = U ? await load() : (db || await load()); await seed(); n(); });
 const A = (q, s, n) => {
   const m = mem(db.sessions[sha((q.headers.authorization || '').replace('Bearer ', ''))]);
   if (!m) return s.status(401).json({ error: 'Session expirée.', auth: true });
@@ -76,6 +92,16 @@ app.post('/api/pin/setup', async (q, s) => {
   if (!m || m.pin) return bad(s, 'Ce profil a déjà un PIN.');
   if (!okPin(String(q.body.pin))) return bad(s, 'Le code doit contenir 4 chiffres.');
   m.pin = hashPin(String(q.body.pin)); s.json(await session(m.id));
+});
+app.post('/api/pin/change', A, async (q, s) => {
+  const m = q.me, f = fails[m.id] || (fails[m.id] = { n: 0, until: 0 });
+  if (Date.now() < f.until) return bad(s, 'Trop d’essais. Patientez 30 secondes.', 429);
+  if (!chk(String(q.body.oldPin || ''), m.pin)) { if (++f.n >= 3) { f.until = Date.now() + 30000; f.n = 0; } return bad(s, 'Ancien code incorrect.', 401); }
+  if (!okPin(String(q.body.newPin))) return bad(s, 'Le nouveau code doit contenir 4 chiffres.');
+  f.n = 0; m.pin = hashPin(String(q.body.newPin));
+  const keep = sha(q.headers.authorization.replace('Bearer ', ''));
+  Object.keys(db.sessions).forEach(k => { if (db.sessions[k] === m.id && k !== keep) delete db.sessions[k]; }); // déconnecte les autres appareils
+  await save(); s.json({});
 });
 app.post('/api/logout', A, async (q, s) => { delete db.sessions[sha(q.headers.authorization.replace('Bearer ', ''))]; await save(); s.json({}); });
 app.get('/api/me', A, (q, s) => s.json({ id: q.me.id }));
