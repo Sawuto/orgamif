@@ -1,6 +1,8 @@
 const express = require('express'), fs = require('fs'), path = require('path'), crypto = require('crypto');
 const FILE = process.env.DB_FILE || path.join(__dirname, 'data', 'db.json');
-const U = process.env.UPSTASH_REDIS_REST_URL, T = process.env.UPSTASH_REDIS_REST_TOKEN; // stockage optionnel (Vercel)
+// Variables posées par l'intégration Upstash/Vercel, avec ou sans préfixe (ex. SACCONE_KV_REST_API_URL)
+const pick = re => { const k = Object.keys(process.env).find(n => re.test(n)); return k ? process.env[k] : undefined; };
+const U = pick(/(^|_)(UPSTASH_REDIS_REST_URL|KV_REST_API_URL)$/), T = pick(/(^|_)(UPSTASH_REDIS_REST_TOKEN|KV_REST_API_TOKEN)$/); // stockage optionnel (Vercel)
 const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 const uid = () => crypto.randomBytes(4).toString('hex');
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
