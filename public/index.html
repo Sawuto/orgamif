@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Planning, tâches et courses de la famille">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E🏠%3C/text%3E%3C/svg%3E">
+<title>Notre maison – gestion familiale</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+<header><h1>Notre maison</h1><p class="date">{{ today }}</p>
+ <p class="date" v-if="me">Connecté : <b>{{ me.name }}</b> <button class="x" style="text-decoration:underline;font-size:.9rem" @click="logout()">Changer de profil</button></p></header>
+
+<main v-if="!me" class="login">
+ <p class="err" v-if="err">{{ err }}</p>
+ <template v-if="!members.length"><h2>Bienvenue</h2><div class="bar"><label>Prénom<input v-model="nm.name"></label><label>Couleur<input type="color" v-model="nm.color"></label><button class="btn" @click="addMember()">Créer</button></div></template>
+ <template v-else-if="!sel"><h2>Qui êtes-vous ?</h2>
+  <div class="chips"><button class="chip" v-for="m in members" :key="m.id" @click="pick(m)"><span class="dot" :style="{background:m.color}"></span>{{ m.name }}</button></div></template>
+ <template v-else><h2>{{ sel.name }}</h2>
+  <p v-if="!sel.hasPin">Première connexion : choisissez un code PIN de 4 chiffres.</p>
+  <form class="bar" @submit.prevent="enter()">
+   <label>{{ sel.hasPin ? 'Code PIN (4 chiffres)' : 'Nouveau code' }}<input v-model="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" style="width:110px" autofocus></label>
+   <label v-if="!sel.hasPin">Confirmer<input v-model="pin2" type="password" inputmode="numeric" maxlength="4" autocomplete="off" style="width:110px"></label>
+   <button class="btn">{{ sel.hasPin ? 'Entrer' : 'Valider' }}</button><button type="button" class="x" @click="sel=null;err=''">Retour</button></form></template>
+</main>
+
+<template v-else-if="st">
+<nav role="tablist"><button v-for="t in tabs" :key="t[0]" role="tab" :aria-selected="tab===t[0]" @click="tab=t[0]">{{ t[1] }}</button></nav>
+<main>
+
+<template v-if="tab==='plan'">
+ <div class="tool"><select v-model="filter" aria-label="Personne"><option :value="null">Tout le monde</option><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}{{ m.id===me.id?' (moi)':'' }}</option></select>
+  <div class="chips"><button class="chip" :aria-pressed="!kf" @click="kf=null">Tous</button><button class="chip" v-for="k in ['Cours','Activité']" :key="k" :aria-pressed="kf===k" @click="kf=k">{{ k }}</button></div></div>
+ <div class="chips" v-if="st.tpl.length"><span class="mu" style="align-self:center">Ajout rapide :</span><button class="chip" v-for="t in st.tpl" :key="t.id" @click="applyTpl(t)">+ {{ t.t }} <small class="mu">{{ t.s }}</small></button></div>
+ <p class="err" v-if="err" role="alert">{{ err }}</p>
+ <div class="tg">
+  <div class="ax"><div class="dh"></div><div class="db" :style="{height:grid.H+'px'}"><div class="hr" v-for="h in grid.hours" :key="h" :style="{top:(h-grid.lo)*44+'px'}">{{ h }}h</div></div></div>
+  <div class="dc" :class="{today:c.i===todayIdx}" v-for="c in grid.cols" :key="c.i">
+   <div class="dh">{{ c.name }} <small class="mu" v-if="c.range">{{ c.range }}</small></div>
+   <div class="db" :style="{height:grid.H+'px'}">
+    <div class="ev" v-for="b in c.blocks" :key="b.e.id" :title="b.title" :style="b.style"><b>{{ b.e.t }}</b><small>{{ b.sub }}</small>
+     <button v-if="b.e.g" class="x x2" title="Supprimer toute la série" aria-label="Supprimer toute la série" @click="call('DELETE','/series/'+b.e.g)">⟳</button>
+     <button class="x" aria-label="Supprimer" @click="call('DELETE','/events/'+b.e.id)">×</button></div>
+   </div></div>
+ </div>
+ <details class="more"><summary>Ajouter un événement ou importer un agenda</summary>
+  <form class="bar" @submit.prevent="addEvent()">
+   <label>Titre<input v-model="f.t" placeholder="Ex. : Piano, réunion parents"></label>
+   <label>Type<select v-model="f.k"><option>Activité</option><option>Réunion</option><option>Cours</option></select></label>
+   <label>Qui<select v-model="f.m"><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label>
+   <label>Jour<select v-model.number="f.d"><option v-for="(d,i) in DAYS" :key="i" :value="i">{{ d }}</option></select></label>
+   <label>Répéter<select v-model="f.r"><option value="one">Ce jour seulement</option><option value="wk">Lundi à vendredi</option><option value="we">Week-end</option><option value="all">Tous les jours</option></select></label>
+   <label>Début<input type="time" v-model="f.s"></label><label>Fin<input type="time" v-model="f.e"></label>
+   <button class="btn">Ajouter</button><button type="button" class="x" style="text-decoration:underline" @click="saveTpl()">Enregistrer comme raccourci</button>
+   <p class="err" role="alert" v-if="err2" style="flex-basis:100%;margin:0">{{ err2 }}</p></form>
+  <p class="note" v-if="st.tpl.length">Raccourcis enregistrés : <span v-for="t in st.tpl" :key="t.id">{{ t.t }} {{ t.s }}–{{ t.e }} <button class="x" aria-label="Supprimer le raccourci" @click="call('DELETE','/tpl/'+t.id)">×</button> </span></p>
+  <div class="bar"><label>Importer un agenda (.ics) : semaine en cours<input type="file" accept=".ics,text/calendar" @change="icsFile=$event.target.files[0]"></label>
+   <label>Pour<select v-model="f.m"><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label><button class="btn" @click="importIcs()">Importer</button></div>
+  <p class="note" v-if="msg">{{ msg }}</p>
+ </details>
+</template>
+
+<template v-if="tab==='tasks'">
+ <form class="bar" @submit.prevent="add('tasks',{t:nt,m:nm2||me.id},()=>nt='')"><label>Tâche<input v-model="nt" placeholder="Ex. : Ranger sa chambre"></label>
+  <label>Responsable<select v-model="nm2"><option v-for="m in st.members" :key="m.id" :value="m.id">{{ m.name }}</option></select></label><button class="btn">Ajouter</button></form>
+ <ul v-if="st.tasks.length"><li class="row" :class="{done:t.x}" v-for="t in st.tasks" :key="t.id"><input type="checkbox" :checked="t.x" aria-label="Fait" @change="call('PATCH','/tasks/'+t.id,{x:$event.target.checked})"><span class="t">{{ t.t }}</span>
+  <span class="dot" :style="{background:mem(t.m).color}"></span><span>{{ mem(t.m).name }}</span><button class="x" aria-label="Supprimer" @click="call('DELETE','/tasks/'+t.id)">×</button></li></ul>
+ <p class="empty" v-else>Aucune tâche. Ajoutez la première ci-dessus.</p>
+</template>
+
+<template v-if="tab==='shop'">
+ <form class="bar" @submit.prevent="add('shop',{t:ns},()=>ns='')"><label>Article<input v-model="ns" placeholder="Ex. : Pommes"></label><button class="btn">Ajouter</button>
+  <button type="button" class="x" @click="call('DELETE','/shop-checked')">Retirer les articles cochés</button></form>
+ <ul v-if="st.shop.length"><li class="row" :class="{done:t.x}" v-for="t in st.shop" :key="t.id"><input type="checkbox" :checked="t.x" aria-label="Acheté" @change="call('PATCH','/shop/'+t.id,{x:$event.target.checked})"><span class="t">{{ t.t }}</span><button class="x" aria-label="Supprimer" @click="call('DELETE','/shop/'+t.id)">×</button></li></ul>
+ <p class="empty" v-else>La liste est vide.</p>
+</template>
+
+<template v-if="tab==='links'">
+ <form class="bar" @submit.prevent="add('links',lk,()=>lk={t:'',k:'Lien',u:'',i:''})"><label>Nom<input v-model="lk.t" placeholder="Ex. : Pronote"></label>
+  <label>Type<select v-model="lk.k"><option>Lien</option><option>Calendrier (ICS)</option><option>Pronote</option><option>Autre</option></select></label>
+  <label>Adresse<input v-model="lk.u" placeholder="https://..."></label><label>Identifiant (facultatif)<input v-model="lk.i" autocomplete="off"></label><button class="btn">Ajouter</button></form>
+ <ul v-if="st.links.length"><li class="row" v-for="k in st.links" :key="k.id"><span class="t"><a :href="k.u" target="_blank" rel="noopener noreferrer">{{ k.t }}</a> <small class="mu">({{ k.k }})</small><template v-if="k.i"><br><small class="mu">Identifiant : {{ k.i }}</small></template></span>
+  <button class="x" v-if="k.i" @click="copy(k.i,$event)">Copier</button><button class="x" aria-label="Supprimer" @click="call('DELETE','/links/'+k.id)">×</button></li></ul>
+ <p class="empty" v-else>Aucun lien. Ajoutez le portail de l’école, la mutuelle, les impôts…</p>
+ <p class="note">Ne saisissez pas de mots de passe ici : ils seraient visibles de toute la famille. Gardez-les dans un gestionnaire de mots de passe.</p>
+</template>
+
+<template v-if="tab==='members'">
+ <form class="bar" @submit.prevent="addMember()"><label>Prénom<input v-model="nm.name" placeholder="Ex. : Mamie"></label><label>Couleur<input type="color" v-model="nm.color"></label><button class="btn">Ajouter</button></form>
+ <ul><li class="row" v-for="m in st.members" :key="m.id"><span class="dot" :style="{background:m.color}"></span><span class="t">{{ m.name }} <small class="mu" v-if="m.id===me.id">(vous)</small></span>
+  <button class="x" style="font-size:.8rem;text-decoration:underline" @click="resetPin(m)">{{ m.hasPin ? 'Réinitialiser le PIN' : 'PIN non défini' }}</button>
+  <button class="x" aria-label="Supprimer" @click="delMember(m)">×</button></li></ul>
+ <p class="note">Supprimer un membre retire aussi ses activités et ses tâches. Le PIN est vérifié par le serveur ; un PIN oublié peut être réinitialisé par un autre membre connecté. Les données sont partagées par toute la famille.</p>
+</template>
+<p class="err" v-if="err && tab!=='plan'" role="alert">{{ err }}</p>
+</main>
+</template>
+</div>
+<script src="vendor/vue.global.prod.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
